@@ -20,25 +20,27 @@ CHAIN_ID = 137  # Polygon mainnet
 STARTING_CAPITAL = 150.0
 
 # Risk management
-MAX_BET_SIZE = 20.0          # Max USDC per trade
+MAX_BET_SIZE = 50.0          # Max USDC per trade
 MIN_BET_SIZE = 5.0           # Min USDC per trade
-MAX_CONCURRENT_POSITIONS = 4
-MAX_TOTAL_EXPOSURE = 60.0    # Max USDC in open positions
-MAX_DAILY_LOSS = 50.0        # Stop trading if daily loss exceeds this
-DAILY_TRADE_LIMIT = 100
-KELLY_FRACTION = 0.25        # Quarter-Kelly for position sizing
+MAX_CONCURRENT_POSITIONS = 6
+MAX_BET_FRACTION = 0.35      # Max 35% of capital per trade
+KELLY_FRACTION = 0.50        # Half-Kelly for aggressive growth
+
+# Compounding: trade sizes grow with capital
+COMPOUND_PROFITS = True       # Reinvest all profits into larger trades
+GROWTH_TARGET_DAILY = 0.10    # Target 10% daily growth (informational)
 
 # Strategy parameters
-MIN_EDGE_THRESHOLD = 0.10    # 10% minimum edge to enter a trade
-ENTRY_SECONDS_BEFORE_CLOSE = 45  # Enter at T-45s before window closes
-LATEST_ENTRY_SECONDS = 10       # Don't enter after T-10s
+MIN_EDGE_THRESHOLD = 0.07    # 7% minimum edge to enter a trade (more trades)
+ENTRY_SECONDS_BEFORE_CLOSE = 60  # Enter at T-60s before window closes (wider window)
+LATEST_ENTRY_SECONDS = 8        # Don't enter after T-8s
 LOOKBACK_CANDLES = 30           # 30 x 1-min candles for momentum
 EMA_FAST_PERIOD = 5
 EMA_SLOW_PERIOD = 15
-COOLDOWN_SECONDS = 60           # Min seconds between trades
+COOLDOWN_SECONDS = 0            # No cooldown - trade every window
 
 # Timing
-SCAN_INTERVAL_SECONDS = 30      # How often to check for opportunities
+SCAN_INTERVAL_SECONDS = 15      # Check more frequently for opportunities
 MARKET_WINDOW_SECONDS = 300     # 5-minute market windows
 
 # Dry run mode (paper trading)

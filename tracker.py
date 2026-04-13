@@ -149,13 +149,37 @@ class TradeTracker:
     def get_summary(self) -> dict:
         """Get a summary of trading performance."""
         win_rate = (self.wins / self.total_trades * 100) if self.total_trades > 0 else 0
+        avg_win = 0.0
+        avg_loss = 0.0
+        if self.wins > 0:
+            avg_win = sum(p.pnl for p in self.positions if p.status == "WON") / self.wins
+        if self.losses > 0:
+            avg_loss = sum(p.pnl for p in self.positions if p.status == "LOST") / self.losses
+
+        # Streak tracking
+        streak = 0
+        streak_type = ""
+        for p in reversed(self.positions):
+            if p.status == "OPEN":
+                continue
+            if not streak_type:
+                streak_type = p.status
+                streak = 1
+            elif p.status == streak_type:
+                streak += 1
+            else:
+                break
+
         return {
             "total_trades": self.total_trades,
             "wins": self.wins,
             "losses": self.losses,
             "win_rate": f"{win_rate:.1f}%",
             "total_pnl": f"${self.total_pnl:+.2f}",
+            "avg_win": f"${avg_win:+.2f}",
+            "avg_loss": f"${avg_loss:+.2f}",
             "open_positions": len(self.get_open_positions()),
+            "streak": f"{streak} {streak_type}" if streak_type else "None",
         }
 
     def save_to_file(self, filepath: str = "trades.json"):
@@ -172,21 +196,36 @@ class TradeTracker:
         except Exception as e:
             logger.error(f"Failed to save trade history: {e}")
 
-    def print_status(self, capital: float):
-        """Print a formatted status update to the console."""
+    def print_status(self, risk_manager):
+        """Print a formatted status update with compounding growth metrics."""
         summary = self.get_summary()
         open_positions = self.get_open_positions()
+        status = risk_manager.get_status()
+        capital = risk_manager.current_capital
+        growth = ((capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+        next_max = max(config.MAX_BET_SIZE, capital * config.MAX_BET_FRACTION)
 
         print("\n" + "=" * 60)
-        print(f"  POLYMARKET BTC BOT STATUS")
-        print(f"  Capital: ${capital:.2f} | Total PnL: {summary['total_pnl']}")
+        print(f"  POLYMARKET BTC BOT - 24/7 COMPOUNDING")
+        print("-" * 60)
+        print(f"  Capital:   ${capital:.2f}  ({growth:+.1f}% from ${config.STARTING_CAPITAL:.0f})")
+        print(f"  Peak:      ${risk_manager.peak_capital:.2f}")
+        print(f"  Total PnL: {summary['total_pnl']}")
+        print(f"  Next Max Trade: ${next_max:.2f}")
+        print("-" * 60)
         print(
             f"  Trades: {summary['total_trades']} | "
             f"W/L: {summary['wins']}/{summary['losses']} | "
             f"Win Rate: {summary['win_rate']}"
         )
+        print(
+            f"  Avg Win: {summary['avg_win']} | "
+            f"Avg Loss: {summary['avg_loss']} | "
+            f"Streak: {summary['streak']}"
+        )
+        print(f"  Exposure: ${status['total_exposure']:.2f} | Available: ${status['available']:.2f}")
         if open_positions:
-            print(f"  Open Positions: {len(open_positions)}")
+            print(f"  Open Positions ({len(open_positions)}):")
             for pos in open_positions:
                 secs_left = max(0, pos.window_end - time.time())
                 print(

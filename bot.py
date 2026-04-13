@@ -17,15 +17,18 @@ logger = logging.getLogger("polymarket_bot")
 
 class TradingBot:
     """
-    Autonomous Polymarket BTC 5-minute market trading bot.
+    Autonomous 24/7 Polymarket BTC 5-minute market trading bot.
+
+    Runs continuously with no daily limits. Profits compound into
+    larger trade sizes for accelerating growth.
 
     Main loop:
     1. Discover active BTC 5-minute markets
-    2. Wait until T-45 seconds before window closes
+    2. Wait until T-60 seconds before window closes
     3. Fetch BTC price + momentum data
     4. Analyze for edge vs market prices
-    5. If edge found, size the bet and execute
-    6. Resolve expired positions and track P&L
+    5. If edge found, size the bet (scales with capital) and execute
+    6. Resolve expired positions, reinvest profits, repeat 24/7
     """
 
     def __init__(self, dry_run: bool = None):
@@ -41,18 +44,26 @@ class TradingBot:
         self.tracker = TradeTracker()
 
         self._running = False
-        self._last_daily_reset = self._get_utc_date()
+        self._cycle_count = 0
+        self._start_time = time.time()
 
     def initialize(self):
         """Set up connections and verify everything works."""
+        mode_str = "DRY RUN (paper trading)" if self.dry_run else "LIVE TRADING 24/7"
+        max_trade = f"${config.MAX_BET_SIZE:.0f} (scales with growth)"
+
         print("\n" + "=" * 60)
         print("  POLYMARKET BTC 5-MINUTE TRADING BOT")
+        print("  >> AGGRESSIVE COMPOUNDING MODE <<")
         print("=" * 60)
-        print(f"  Mode: {'DRY RUN (paper trading)' if self.dry_run else 'LIVE TRADING'}")
-        print(f"  Starting Capital: ${config.STARTING_CAPITAL:.2f}")
-        print(f"  Max Bet Size: ${config.MAX_BET_SIZE:.2f}")
-        print(f"  Min Edge: {config.MIN_EDGE_THRESHOLD:.0%}")
-        print(f"  Daily Loss Limit: ${config.MAX_DAILY_LOSS:.2f}")
+        print(f"  Mode:           {mode_str}")
+        print(f"  Starting Cap:   ${config.STARTING_CAPITAL:.2f}")
+        print(f"  Max Trade Size: {max_trade}")
+        print(f"  Max Bet %:      {config.MAX_BET_FRACTION:.0%} of capital")
+        print(f"  Min Edge:       {config.MIN_EDGE_THRESHOLD:.0%}")
+        print(f"  Kelly Fraction: {config.KELLY_FRACTION}")
+        print(f"  Compounding:    {'ON' if config.COMPOUND_PROFITS else 'OFF'}")
+        print(f"  Trading:        24/7 - No daily limits")
         print("=" * 60 + "\n")
 
         # Initialize Polymarket client
@@ -69,64 +80,64 @@ class TradingBot:
         else:
             print("  WARNING: Could not fetch BTC price from Binance")
 
-        print(f"\n  Bot initialized. Entering trading loop...\n")
+        print(f"\n  Bot initialized. Trading 24/7...\n")
 
     def run(self):
-        """Main trading loop. Runs until interrupted."""
+        """Main trading loop. Runs 24/7 until manually interrupted."""
         self._running = True
+        self._start_time = time.time()
 
         while self._running:
             try:
                 self._run_cycle()
+                self._cycle_count += 1
             except KeyboardInterrupt:
-                logger.info("Shutdown requested.")
+                logger.info("Shutdown requested by user.")
                 break
             except Exception as e:
                 logger.error(f"Cycle error: {e}", exc_info=True)
-                time.sleep(10)  # Brief pause on error
+                # Brief pause on error, then keep going
+                time.sleep(5)
 
         self._shutdown()
 
     def _run_cycle(self):
         """Execute one full trading cycle."""
-        # Check for daily reset
-        today = self._get_utc_date()
-        if today != self._last_daily_reset:
-            self.risk_manager.reset_daily()
-            self._last_daily_reset = today
-
-        # Step 1: Resolve any expired positions
+        # Step 1: Resolve any expired positions (collect profits)
         self._resolve_expired_positions()
 
-        # Step 2: Check if we can trade
+        # Step 2: Check if we can trade (only blocked by max positions or zero capital)
         risk_status = self.risk_manager.get_status()
         if not risk_status["can_trade"]:
-            logger.info(f"Cannot trade right now. Risk status: {risk_status}")
-            self.tracker.print_status(self.risk_manager.current_capital)
+            logger.info(
+                f"Waiting for positions to resolve. "
+                f"Open: {risk_status['open_positions']}, "
+                f"Available: ${risk_status['available']:.2f}"
+            )
             time.sleep(config.SCAN_INTERVAL_SECONDS)
             return
 
         # Step 3: Find active BTC 5-minute markets
         markets = self.scanner.find_active_btc_5min_markets()
         if not markets:
-            logger.debug("No active BTC 5-min markets found. Waiting...")
+            logger.debug("No active BTC 5-min markets found. Scanning again...")
             time.sleep(config.SCAN_INTERVAL_SECONDS)
             return
 
         # Step 4: Process each market
+        traded = False
         for market in markets:
             seconds_left = market.seconds_until_close
 
-            # Check timing window
+            # Wait for entry window if needed
             if seconds_left > config.ENTRY_SECONDS_BEFORE_CLOSE:
                 wait_time = seconds_left - config.ENTRY_SECONDS_BEFORE_CLOSE
-                logger.info(
-                    f"Market {market.slug}: {seconds_left:.0f}s left. "
-                    f"Waiting {wait_time:.0f}s for entry window..."
-                )
-                if wait_time > 0 and wait_time <= config.ENTRY_SECONDS_BEFORE_CLOSE:
+                if wait_time <= config.ENTRY_SECONDS_BEFORE_CLOSE:
+                    logger.info(
+                        f"Market {market.slug}: {seconds_left:.0f}s left. "
+                        f"Waiting {wait_time:.0f}s for optimal entry..."
+                    )
                     time.sleep(wait_time)
-                    # Refresh seconds_left after sleeping
                     seconds_left = market.seconds_until_close
                 else:
                     continue
@@ -135,29 +146,30 @@ class TradingBot:
                 logger.debug(f"Market {market.slug}: too late ({seconds_left:.0f}s)")
                 continue
 
-            # Step 5: Gather data and analyze
-            self._analyze_and_trade(market)
+            # Step 5: Analyze and trade
+            if self._analyze_and_trade(market):
+                traded = True
 
-        # Print status periodically
-        self.tracker.print_status(self.risk_manager.current_capital)
+        # Print status every few cycles
+        if self._cycle_count % 3 == 0 or traded:
+            self.tracker.print_status(self.risk_manager)
 
         # Wait for next scan
         secs_to_next = self.scanner.seconds_until_window_close()
         if secs_to_next > config.ENTRY_SECONDS_BEFORE_CLOSE:
-            # Sleep until the entry window of the next cycle
             sleep_time = secs_to_next - config.ENTRY_SECONDS_BEFORE_CLOSE
-            logger.info(f"Next entry window in {sleep_time:.0f}s. Sleeping...")
+            logger.info(f"Next window entry in {sleep_time:.0f}s.")
             time.sleep(min(sleep_time, config.SCAN_INTERVAL_SECONDS))
         else:
-            time.sleep(5)  # Brief pause between scans
+            time.sleep(3)  # Brief pause between rapid scans
 
-    def _analyze_and_trade(self, market):
-        """Fetch data, run strategy, and potentially execute a trade."""
+    def _analyze_and_trade(self, market) -> bool:
+        """Fetch data, run strategy, and potentially execute a trade. Returns True if traded."""
         # Fetch current BTC price
         price_snapshot = self.price_feed.get_current_price()
         if not price_snapshot:
             logger.warning("Could not get BTC price. Skipping market.")
-            return
+            return False
 
         # Fetch candles and compute momentum
         candles = self.price_feed.get_recent_candles(
@@ -165,12 +177,12 @@ class TradingBot:
         )
         if not candles:
             logger.warning("Could not get candle data. Skipping market.")
-            return
+            return False
 
         momentum = self.price_feed.compute_momentum(candles)
         if not momentum:
             logger.warning("Could not compute momentum. Skipping market.")
-            return
+            return False
 
         # Fetch Polymarket prices
         yes_price = self.poly_client.get_midpoint(market.yes_token_id)
@@ -193,7 +205,7 @@ class TradingBot:
                 f"Could not get market prices for {market.slug}. "
                 f"YES: {yes_price}, NO: {no_price}"
             )
-            return
+            return False
 
         logger.info(
             f"Market: {market.question} | "
@@ -213,18 +225,18 @@ class TradingBot:
 
         if not signal:
             logger.debug(f"No signal for {market.slug}.")
-            return
+            return False
 
-        # Risk check
+        # Risk check (sizing scales with capital)
         risk_decision = self.risk_manager.evaluate_trade(signal)
         if not risk_decision.approved:
-            logger.info(f"Risk rejected: {risk_decision.reason}")
-            return
+            logger.info(f"Risk check: {risk_decision.reason}")
+            return False
 
-        # Execute!
+        # Execute the trade
         logger.info(
             f"EXECUTING TRADE: {signal.direction} ${risk_decision.position_size:.2f} "
-            f"on {market.slug}"
+            f"on {market.slug} | Capital: ${self.risk_manager.current_capital:.2f}"
         )
 
         order_result = self.executor.place_market_order(
@@ -233,29 +245,35 @@ class TradingBot:
         )
 
         if order_result.success:
-            # Record the position
             position = self.tracker.open_position(market, signal, order_result)
             self.risk_manager.record_trade_opened(order_result.cost or risk_decision.position_size)
-            logger.info(f"Trade executed successfully. Order ID: {order_result.order_id}")
+            logger.info(f"Trade executed. Order ID: {order_result.order_id}")
+            return True
         else:
             logger.warning(f"Trade failed: {order_result.error}")
+            return False
 
     def _resolve_expired_positions(self):
-        """Check and resolve positions whose markets have expired."""
+        """Check and resolve positions whose markets have expired. Profits flow back to capital."""
         expired = self.tracker.get_expired_positions()
         if not expired:
             return
 
         for position in expired:
-            # Determine outcome
-            # For BTC 5-min markets: if we bought YES and BTC finished above strike, we win
-            # We need the final BTC price to determine this
             won = self._determine_outcome(position)
 
             self.tracker.resolve_position(
                 position, won, self.risk_manager.current_capital
             )
             self.risk_manager.record_trade_closed(position.cost_basis, position.pnl)
+
+            # Log compounding effect
+            if won and position.pnl > 0:
+                growth = ((self.risk_manager.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+                logger.info(
+                    f"PROFIT COMPOUNDED: +${position.pnl:.2f} -> "
+                    f"Capital now ${self.risk_manager.current_capital:.2f} ({growth:+.1f}% growth)"
+                )
 
         # Save trade log after resolutions
         self.tracker.save_to_file("trades.json")
@@ -265,11 +283,8 @@ class TradingBot:
         Determine if a position won or lost.
 
         For dry run: use current BTC price vs the inferred strike.
-        For live: ideally query Polymarket for resolution, but we can
-        also use BTC price as a proxy since these are binary BTC markets.
+        For live: query Polymarket for resolution, fallback to BTC price.
         """
-        # Get the market info to find the strike price
-        # Since we store the slug, try to reconstruct
         price = self.price_feed.get_current_price()
         if not price:
             logger.warning("Cannot determine outcome without price data. Assuming loss.")
@@ -284,15 +299,13 @@ class TradingBot:
             else:
                 return not btc_above_strike
 
-        # Fallback: if we can't get market data, check token price
-        # If our token price went to ~1.0, we won; if ~0.0, we lost
+        # Fallback: check token price on Polymarket
         token_price = self.poly_client.get_last_trade_price(position.token_id)
         if token_price > 0.8:
             return True
         elif token_price < 0.2:
             return False
 
-        # If we can't determine, log and assume loss (conservative)
         logger.warning(
             f"Could not determine outcome for {position.market_slug}. "
             f"Token price: {token_price}. Assuming loss."
@@ -301,21 +314,26 @@ class TradingBot:
 
     def _shutdown(self):
         """Clean shutdown."""
-        print("\nShutting down...")
+        print("\nShutting down bot...")
         self.tracker.save_to_file("trades.json")
-        self.tracker.print_status(self.risk_manager.current_capital)
+        self.tracker.print_status(self.risk_manager)
 
+        uptime = time.time() - self._start_time
+        hours = uptime / 3600
         summary = self.tracker.get_summary()
-        print(f"\nFinal Summary:")
-        print(f"  Total Trades: {summary['total_trades']}")
-        print(f"  Win Rate: {summary['win_rate']}")
-        print(f"  Total PnL: {summary['total_pnl']}")
-        print(f"  Final Capital: ${self.risk_manager.current_capital:.2f}")
+        growth = ((self.risk_manager.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+
+        print(f"\n  SESSION SUMMARY")
+        print(f"  {'='*40}")
+        print(f"  Uptime:         {hours:.1f} hours")
+        print(f"  Total Trades:   {summary['total_trades']}")
+        print(f"  Win Rate:       {summary['win_rate']}")
+        print(f"  Total PnL:      {summary['total_pnl']}")
+        print(f"  Starting Cap:   ${config.STARTING_CAPITAL:.2f}")
+        print(f"  Final Capital:  ${self.risk_manager.current_capital:.2f}")
+        print(f"  Growth:         {growth:+.1f}%")
+        print(f"  Peak Capital:   ${self.risk_manager.peak_capital:.2f}")
 
         # Cancel any open orders on shutdown
         if self.executor and not self.dry_run:
             self.executor.cancel_all_orders()
-
-    def _get_utc_date(self) -> str:
-        """Get current UTC date as string."""
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
