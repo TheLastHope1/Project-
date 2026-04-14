@@ -62,7 +62,7 @@ class TradingStrategy:
         if seconds_left > config.ENTRY_SECONDS_BEFORE_CLOSE:
             return None
         if seconds_left < config.LATEST_ENTRY_SECONDS:
-            logger.debug(f"Too late to enter ({seconds_left:.0f}s left).")
+            logger.info(f"SKIP {market.slug}: too late ({seconds_left:.0f}s left).")
             return None
 
         if strike <= 0:
@@ -71,7 +71,9 @@ class TradingStrategy:
 
         # Stale / edge-of-book prices -> skip
         if yes_price <= 0.02 or yes_price >= 0.98:
-            logger.debug("Market prices at extremes, skipping.")
+            logger.info(
+                f"SKIP {market.slug}: market at extreme (YES={yes_price:.3f})."
+            )
             return None
 
         # ---- The tape ----
@@ -79,9 +81,9 @@ class TradingStrategy:
 
         # Coin-flip zone: BTC is too close to strike for a reliable call.
         if abs(distance_pct) < self.COIN_FLIP_BAND_PCT:
-            logger.debug(
-                f"Coin-flip zone: BTC ${price.price:,.2f} vs strike "
-                f"${strike:,.2f} ({distance_pct*100:+.3f}%)."
+            logger.info(
+                f"SKIP {market.slug}: coin-flip zone - BTC ${price.price:,.2f} "
+                f"vs strike ${strike:,.2f} ({distance_pct*100:+.3f}%)."
             )
             return None
 
@@ -99,16 +101,16 @@ class TradingStrategy:
         if take_price < self.MIN_TAKE_PRICE:
             # Market disagrees with where the tape is - something's off,
             # or there's big momentum against us. Don't fight the market.
-            logger.debug(
-                f"Tape says {tape_direction} but market disagrees "
-                f"(take_price={take_price:.3f} < {self.MIN_TAKE_PRICE}). Skip."
+            logger.info(
+                f"SKIP {market.slug}: tape={tape_direction} but market disagrees "
+                f"(take_price={take_price:.3f} < {self.MIN_TAKE_PRICE})."
             )
             return None
         if take_price > self.MAX_TAKE_PRICE:
             # No edge left to capture - risking $X to make pennies.
-            logger.debug(
-                f"Tape direction {tape_direction} already fully priced "
-                f"(take_price={take_price:.3f} > {self.MAX_TAKE_PRICE}). Skip."
+            logger.info(
+                f"SKIP {market.slug}: {tape_direction} already fully priced "
+                f"(take_price={take_price:.3f} > {self.MAX_TAKE_PRICE})."
             )
             return None
 
@@ -126,10 +128,11 @@ class TradingStrategy:
         edge = confidence - take_price
 
         if edge < config.MIN_EDGE_THRESHOLD:
-            logger.debug(
-                f"No edge: {tape_direction} | BTC ${price.price:,.2f} vs "
-                f"${strike:,.2f} | our p={confidence:.3f}, "
-                f"mkt={take_price:.3f}, edge={edge:.3f}"
+            logger.info(
+                f"SKIP {market.slug}: edge too small - {tape_direction} | "
+                f"BTC ${price.price:,.2f} vs ${strike:,.2f} | "
+                f"our p={confidence:.3f} vs mkt={take_price:.3f} | "
+                f"edge={edge:.3f} < {config.MIN_EDGE_THRESHOLD}"
             )
             return None
 
