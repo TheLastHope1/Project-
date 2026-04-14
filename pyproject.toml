@@ -1,0 +1,29 @@
+[project]
+name = "wsb-sentiment-tracker"
+version = "0.1.0"
+description = "WallStreetBets sentiment tracking and inverse strategy backtesting toolkit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "praw>=7.7.1",
+  "pandas>=2.2.0",
+  "numpy>=2.0.0",
+  "sqlalchemy>=2.0.0",
+  "psycopg[binary]>=3.2.0",
+  "yfinance>=0.2.0",
+  "python-dotenv>=1.0.0",
+  "pydantic>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 100
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

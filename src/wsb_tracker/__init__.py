@@ -1,0 +1,1 @@
+"""WSB sentiment tracker package."""
