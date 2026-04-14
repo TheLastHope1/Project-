@@ -91,11 +91,30 @@ class PolymarketClient:
             logger.error(f"Failed to get order book for {token_id}: {e}")
             return {}
 
+    @staticmethod
+    def _extract_price(resp, *keys) -> float:
+        """py-clob-client >=0.34 returns dicts like {"mid": "0.5"} or
+        {"price": "0.5"}. Older versions returned the raw string. Handle both."""
+        if resp is None:
+            return 0.0
+        if isinstance(resp, dict):
+            for k in keys:
+                if k in resp and resp[k] is not None:
+                    try:
+                        return float(resp[k])
+                    except (TypeError, ValueError):
+                        return 0.0
+            return 0.0
+        try:
+            return float(resp)
+        except (TypeError, ValueError):
+            return 0.0
+
     def get_midpoint(self, token_id: str) -> float:
         """Get the midpoint price for a token."""
         try:
-            mid = self.client.get_midpoint(token_id)
-            return float(mid) if mid else 0.0
+            resp = self.client.get_midpoint(token_id)
+            return self._extract_price(resp, "mid", "midpoint", "price")
         except Exception as e:
             logger.error(f"Failed to get midpoint for {token_id}: {e}")
             return 0.0
@@ -103,8 +122,8 @@ class PolymarketClient:
     def get_price(self, token_id: str, side: str) -> float:
         """Get the best price for a side (BUY/SELL)."""
         try:
-            price = self.client.get_price(token_id, side)
-            return float(price) if price else 0.0
+            resp = self.client.get_price(token_id, side)
+            return self._extract_price(resp, "price", "mid")
         except Exception as e:
             logger.error(f"Failed to get price for {token_id} {side}: {e}")
             return 0.0
@@ -112,8 +131,8 @@ class PolymarketClient:
     def get_last_trade_price(self, token_id: str) -> float:
         """Get the last trade price for a token."""
         try:
-            price = self.client.get_last_trade_price(token_id)
-            return float(price) if price else 0.0
+            resp = self.client.get_last_trade_price(token_id)
+            return self._extract_price(resp, "price", "mid")
         except Exception as e:
             logger.error(f"Failed to get last trade price for {token_id}: {e}")
             return 0.0
