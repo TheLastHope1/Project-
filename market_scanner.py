@@ -171,9 +171,9 @@ class MarketScanner:
                 return None
 
             question = data.get("question", "")
-            strike_price = self._parse_strike_price(question)
 
-            # Parse timestamps
+            # Parse timestamps first — window_start is needed for "Up or Down"
+            # markets where the strike is the BTC price at window open.
             end_date_str = data.get("endDate", "")
             if end_date_str:
                 window_end = datetime.fromisoformat(
@@ -187,6 +187,18 @@ class MarketScanner:
             window_start = datetime.fromtimestamp(
                 window_end.timestamp() - self.INTERVAL_SECONDS, tz=timezone.utc
             )
+
+            # First try to extract an explicit strike from the question text
+            # (older "Will BTC be above $X" style markets).
+            strike_price = self._parse_strike_price(question)
+
+            # For "Bitcoin Up or Down" markets the question has no $ strike —
+            # the implicit strike is the BTC price at the start of the window.
+            # Fetch it from Binance using the window_start timestamp.
+            if strike_price <= 0 and self._is_up_or_down_market(question):
+                strike_price = self._get_window_open_price(
+                    int(window_start.timestamp())
+                )
 
             return MarketInfo(
                 slug=data.get("slug", ""),
@@ -202,6 +214,49 @@ class MarketScanner:
         except Exception as e:
             logger.error(f"Failed to parse market: {e}")
             return None
+
+    @staticmethod
+    def _is_up_or_down_market(question: str) -> bool:
+        """Detect the 'Bitcoin Up or Down' market format (no explicit strike)."""
+        q = question.lower()
+        return "up or down" in q or "updown" in q
+
+    def _get_window_open_price(self, window_start_ts: int) -> float:
+        """Fetch BTC opening price at the given window start from Binance.
+
+        For 'Bitcoin Up or Down' markets, the implicit strike is the BTC
+        price at the moment the 5-minute window opened. Binance 1-min
+        klines give us this via the `open` field of the candle starting
+        at window_start_ts. Cached per window.
+        """
+        cache_key = f"open_price:{window_start_ts}"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        url = f"{config.BINANCE_API_URL}/api/v3/klines"
+        params = {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "startTime": window_start_ts * 1000,  # ms
+            "limit": 1,
+        }
+
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            # Kline format: [open_time, open, high, low, close, volume, ...]
+            if data and len(data) > 0 and len(data[0]) > 1:
+                open_price = float(data[0][1])
+                # Cache for the duration of the window (5 min is fine).
+                self._set_cached(cache_key, open_price)
+                return open_price
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch BTC window open price for ts={window_start_ts}: {e}"
+            )
+        return 0.0
 
     def _parse_strike_price(self, question: str) -> float:
         """Extract the BTC strike price from the market question."""
