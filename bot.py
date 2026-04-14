@@ -146,6 +146,13 @@ class TradingBot:
                 logger.debug(f"Market {market.slug}: too late ({seconds_left:.0f}s)")
                 continue
 
+            # Skip markets we've already bet on this window
+            if self.risk_manager.has_traded_window(market):
+                logger.debug(
+                    f"Market {market.slug}: already bet on this window, skipping."
+                )
+                continue
+
             # Step 5: Analyze and trade
             if self._analyze_and_trade(market):
                 traded = True
@@ -228,7 +235,7 @@ class TradingBot:
             return False
 
         # Risk check (sizing scales with capital)
-        risk_decision = self.risk_manager.evaluate_trade(signal)
+        risk_decision = self.risk_manager.evaluate_trade(signal, market=market)
         if not risk_decision.approved:
             logger.info(f"Risk check: {risk_decision.reason}")
             return False
@@ -246,7 +253,10 @@ class TradingBot:
 
         if order_result.success:
             position = self.tracker.open_position(market, signal, order_result)
-            self.risk_manager.record_trade_opened(order_result.cost or risk_decision.position_size)
+            self.risk_manager.record_trade_opened(
+                order_result.cost or risk_decision.position_size,
+                market=market,
+            )
             logger.info(f"Trade executed. Order ID: {order_result.order_id}")
             return True
         else:

@@ -2,9 +2,11 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from typing import Optional
 
 import config
 from strategy import Signal
+from market_scanner import MarketInfo
 
 logger = logging.getLogger("polymarket_bot.risk_manager")
 
@@ -35,16 +37,41 @@ class RiskManager:
         self.open_position_count = 0
         self.total_exposure = 0.0
         self._last_trade_time = 0.0
+        # Tracks which (market_slug, window_end_ts) pairs we've already bet
+        # on, so we never stack multiple bets on the same window.
+        self._traded_windows: set[tuple[str, int]] = set()
 
-    def evaluate_trade(self, signal: Signal, current_time: float = 0) -> RiskDecision:
+    @staticmethod
+    def _window_key(market: MarketInfo) -> tuple[str, int]:
+        return (market.slug, int(market.window_end.timestamp()))
+
+    def has_traded_window(self, market: MarketInfo) -> bool:
+        """True if we've already placed a bet on this exact 5-min window."""
+        return self._window_key(market) in self._traded_windows
+
+    def evaluate_trade(
+        self,
+        signal: Signal,
+        market: Optional[MarketInfo] = None,
+        current_time: float = 0,
+    ) -> RiskDecision:
         """
         Evaluate whether a trade should be taken and how large it should be.
 
-        Only rejects trades when:
+        Rejects trades when:
+        - We've already bet on this market's current window
         - Too many concurrent positions open
         - Not enough capital for minimum bet
         - Edge below threshold
         """
+        # Check 0: One bet per market per 5-min window
+        if market is not None and self.has_traded_window(market):
+            return RiskDecision(
+                approved=False,
+                position_size=0,
+                reason=f"Already bet on this window ({market.slug})",
+            )
+
         # Check 1: Max concurrent positions
         if self.open_position_count >= config.MAX_CONCURRENT_POSITIONS:
             return RiskDecision(
@@ -140,18 +167,32 @@ class RiskManager:
 
         return size
 
-    def record_trade_opened(self, cost_basis: float):
+    def record_trade_opened(
+        self, cost_basis: float, market: Optional[MarketInfo] = None
+    ):
         """Record that a new position was opened."""
         self.open_position_count += 1
         self.total_exposure += cost_basis
         self.session_trades += 1
         self._last_trade_time = time.time()
+
+        if market is not None:
+            self._traded_windows.add(self._window_key(market))
+            self._prune_traded_windows()
+
         logger.info(
             f"Position opened: ${cost_basis:.2f} | "
             f"Open: {self.open_position_count} | "
             f"Exposure: ${self.total_exposure:.2f} | "
             f"Capital: ${self.current_capital:.2f}"
         )
+
+    def _prune_traded_windows(self) -> None:
+        """Drop window keys that are more than an hour past expiry."""
+        cutoff = int(time.time()) - 3600
+        self._traded_windows = {
+            (slug, ts) for (slug, ts) in self._traded_windows if ts > cutoff
+        }
 
     def record_trade_closed(self, cost_basis: float, pnl: float):
         """Record that a position was resolved and compound profits."""

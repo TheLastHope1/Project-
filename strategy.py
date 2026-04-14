@@ -16,7 +16,7 @@ class Signal:
     direction: str        # "YES" or "NO"
     confidence: float     # Our estimated probability (0-1)
     market_prob: float    # Market-implied probability
-    edge: float           # confidence - market_prob (for YES direction)
+    edge: float           # confidence - market_prob (for chosen direction)
     bet_token_id: str     # Token ID to buy
     bet_size_hint: str    # "low", "medium", "high" confidence tier
     reasoning: str        # Human-readable explanation
@@ -24,17 +24,27 @@ class Signal:
 
 class TradingStrategy:
     """
-    Generates trading signals for BTC 5-minute binary markets.
+    Tape-following strategy for BTC 5-minute binary markets.
 
-    Core insight: Late in a 5-minute window, the current BTC price relative
-    to the strike price is highly predictive of the outcome. The strategy
-    looks for cases where Polymarket prices lag behind reality.
+    We do NOT try to predict where BTC is going — we follow the tape.
+    In the final minute of a 5-min window the current BTC price
+    relative to strike is highly predictive: if BTC is already above
+    strike with 30s left, YES almost always wins.
+
+    The job here is to recognise cases where Polymarket's price
+    HASN'T fully reflected that reality yet, and take the side the
+    tape favours. We never bet against a correctly-priced market.
     """
 
-    # Weights for probability factors
-    WEIGHT_DISTANCE = 0.50
-    WEIGHT_MOMENTUM = 0.30
-    WEIGHT_VOLATILITY = 0.20
+    # Minimum distance from strike to consider a direction "committed"
+    # (in % of BTC price). Inside this band it's a coin flip — we skip.
+    COIN_FLIP_BAND_PCT = 0.0004   # 0.04% = ~$30 on $75k BTC
+
+    # Market price bounds we'll take the "winning" side at.
+    # Below MIN_TAKE_PRICE: too uncertain, something's off -> skip.
+    # Above MAX_TAKE_PRICE: no upside worth the risk -> skip.
+    MIN_TAKE_PRICE = 0.50
+    MAX_TAKE_PRICE = 0.92
 
     def analyze(
         self,
@@ -44,182 +54,187 @@ class TradingStrategy:
         yes_price: float,
         no_price: float,
     ) -> Optional[Signal]:
-        """
-        Analyze a market and return a Signal if edge is detected.
-
-        Returns None if no tradeable edge exists.
-        """
+        """Return a Signal if we see tradeable tape-following edge, else None."""
         seconds_left = market.seconds_until_close
         strike = market.strike_price
 
-        # Don't trade if too early or too late
+        # Timing gates
         if seconds_left > config.ENTRY_SECONDS_BEFORE_CLOSE:
             return None
         if seconds_left < config.LATEST_ENTRY_SECONDS:
             logger.debug(f"Too late to enter ({seconds_left:.0f}s left).")
             return None
 
-        # Don't trade if strike price couldn't be parsed
         if strike <= 0:
             logger.warning(f"Invalid strike price for market: {market.question}")
             return None
 
-        # Don't trade if market prices look stale
+        # Stale / edge-of-book prices -> skip
         if yes_price <= 0.02 or yes_price >= 0.98:
-            logger.debug("Market prices look stale, skipping.")
+            logger.debug("Market prices at extremes, skipping.")
             return None
 
-        # Step 1: Estimate our probability that BTC finishes above strike
-        our_up_prob = self._estimate_up_probability(
-            current_price=price.price,
-            strike_price=strike,
-            momentum=momentum,
-            seconds_remaining=seconds_left,
-        )
+        # ---- The tape ----
+        distance_pct = (price.price - strike) / strike
 
-        # Step 2: Get market-implied probability
-        market_up_prob = yes_price  # YES price = implied probability of UP
-        market_down_prob = no_price
-
-        # Step 3: Calculate edge for both directions
-        yes_edge = our_up_prob - market_up_prob
-        no_edge = (1 - our_up_prob) - market_down_prob
-
-        # Step 4: Pick the best direction
-        if yes_edge >= config.MIN_EDGE_THRESHOLD and yes_edge >= no_edge:
-            direction = "YES"
-            edge = yes_edge
-            confidence = our_up_prob
-            bet_token = market.yes_token_id
-        elif no_edge >= config.MIN_EDGE_THRESHOLD and no_edge > yes_edge:
-            direction = "NO"
-            edge = no_edge
-            confidence = 1 - our_up_prob
-            bet_token = market.no_token_id
-        else:
+        # Coin-flip zone: BTC is too close to strike for a reliable call.
+        if abs(distance_pct) < self.COIN_FLIP_BAND_PCT:
             logger.debug(
-                f"No edge detected. Our UP prob: {our_up_prob:.3f}, "
-                f"Market: {market_up_prob:.3f}, "
-                f"YES edge: {yes_edge:.3f}, NO edge: {no_edge:.3f}"
+                f"Coin-flip zone: BTC ${price.price:,.2f} vs strike "
+                f"${strike:,.2f} ({distance_pct*100:+.3f}%)."
             )
             return None
 
-        # Step 5: Determine confidence tier
-        if edge >= 0.25:
+        # Direction the tape currently favours
+        if distance_pct > 0:
+            tape_direction = "YES"   # BTC above strike -> UP ticket wins
+            take_price = yes_price
+            bet_token = market.yes_token_id
+        else:
+            tape_direction = "NO"    # BTC below strike -> DOWN ticket wins
+            take_price = no_price
+            bet_token = market.no_token_id
+
+        # Is the tape-direction ticket priced in a zone we'll take?
+        if take_price < self.MIN_TAKE_PRICE:
+            # Market disagrees with where the tape is - something's off,
+            # or there's big momentum against us. Don't fight the market.
+            logger.debug(
+                f"Tape says {tape_direction} but market disagrees "
+                f"(take_price={take_price:.3f} < {self.MIN_TAKE_PRICE}). Skip."
+            )
+            return None
+        if take_price > self.MAX_TAKE_PRICE:
+            # No edge left to capture - risking $X to make pennies.
+            logger.debug(
+                f"Tape direction {tape_direction} already fully priced "
+                f"(take_price={take_price:.3f} > {self.MAX_TAKE_PRICE}). Skip."
+            )
+            return None
+
+        # ---- Confidence model ----
+        # How committed is the tape? Combine distance + time pressure +
+        # momentum alignment into a single probability estimate.
+        confidence = self._tape_confidence(
+            distance_pct=distance_pct,
+            seconds_left=seconds_left,
+            momentum=momentum,
+            tape_direction=tape_direction,
+        )
+
+        # Edge is confidence vs what the market is charging for the ticket
+        edge = confidence - take_price
+
+        if edge < config.MIN_EDGE_THRESHOLD:
+            logger.debug(
+                f"No edge: {tape_direction} | BTC ${price.price:,.2f} vs "
+                f"${strike:,.2f} | our p={confidence:.3f}, "
+                f"mkt={take_price:.3f}, edge={edge:.3f}"
+            )
+            return None
+
+        # Confidence tier for position sizing
+        if edge >= 0.20:
             tier = "high"
-        elif edge >= 0.15:
+        elif edge >= 0.12:
             tier = "medium"
         else:
             tier = "low"
 
         reasoning = (
-            f"BTC ${price.price:,.2f} vs strike ${strike:,.2f} | "
+            f"TAPE {tape_direction}: BTC ${price.price:,.2f} vs strike "
+            f"${strike:,.2f} ({distance_pct*100:+.3f}%) | "
             f"{seconds_left:.0f}s left | "
-            f"Our prob: {confidence:.1%} vs Market: {market_up_prob:.1%} | "
-            f"Edge: {edge:.1%} ({tier}) | "
-            f"Momentum: {momentum.crossover}, RSI: {momentum.rsi:.1f}"
+            f"our p={confidence:.1%} vs mkt={take_price:.1%} | "
+            f"edge={edge:.1%} ({tier}) | "
+            f"mom={momentum.crossover} rsi={momentum.rsi:.0f}"
         )
 
-        logger.info(f"SIGNAL: {direction} | {reasoning}")
+        logger.info(f"SIGNAL: {tape_direction} | {reasoning}")
 
         return Signal(
-            direction=direction,
+            direction=tape_direction,
             confidence=confidence,
-            market_prob=market_up_prob if direction == "YES" else market_down_prob,
+            market_prob=take_price,
             edge=edge,
             bet_token_id=bet_token,
             bet_size_hint=tier,
             reasoning=reasoning,
         )
 
-    def _estimate_up_probability(
+    def _tape_confidence(
         self,
-        current_price: float,
-        strike_price: float,
+        distance_pct: float,
+        seconds_left: float,
         momentum: MomentumData,
-        seconds_remaining: float,
+        tape_direction: str,
     ) -> float:
         """
-        Estimate the probability that BTC will be above strike at expiry.
+        Estimate the probability that BTC stays on the tape-favoured
+        side of strike until the window closes.
 
-        Combines three factors:
-        1. Price distance (how far current price is from strike)
-        2. Momentum (short-term trend direction and strength)
-        3. Volatility (recent price variance)
+        Three ingredients:
+          1. Distance: further from strike = harder to reverse.
+          2. Time: less time remaining = harder to reverse.
+          3. Momentum: aligned momentum boosts, opposing momentum shaves.
         """
-        # Factor 1: Price Distance (sigmoid model)
-        distance_pct = (current_price - strike_price) / strike_price
+        # (1) Distance x time, fed into a sigmoid. Steepness grows as
+        # the window closes, so 30s left with a $50 lead is near-certain.
+        abs_dist = abs(distance_pct)
 
-        # Sigmoid steepness increases as time remaining decreases
-        # (less time = current price more predictive)
-        time_factor = max(1.0, 300.0 / max(seconds_remaining, 1.0))
-        k = 500.0 * time_factor  # Base steepness * time factor
+        # Time factor: at t=60s factor~1.0; at t=10s factor~6.0.
+        time_factor = max(1.0, 60.0 / max(seconds_left, 1.0))
 
-        distance_prob = 1.0 / (1.0 + math.exp(-k * distance_pct))
+        # k calibrated so at t=30s a ~0.04% lead gives ~0.60, 0.1% ~0.75,
+        # 0.2% ~0.90. We already branched on sign of distance, so base>=0.5.
+        k = 8000.0 * time_factor
+        base = 1.0 / (1.0 + math.exp(-k * abs_dist))
 
-        # Factor 2: Momentum
-        momentum_score = self._compute_momentum_score(momentum)
-        momentum_prob = 0.5 + (momentum_score * 0.15)
-        momentum_prob = max(0.05, min(0.95, momentum_prob))
+        # (2) Momentum alignment: does short-term momentum support the tape?
+        aligned = self._momentum_alignment(momentum, tape_direction)
+        # aligned in [-1, +1]. Shift base by up to +/- 0.08.
+        base = base + 0.08 * aligned
 
-        # Factor 3: Volatility adjustment
-        # High volatility = less confidence in any direction (shrink toward 0.5)
-        vol_scaling = 50.0  # Tunable: how much volatility affects confidence
-        vol_dampening = max(0.3, 1.0 - momentum.volatility * vol_scaling)
+        # (3) Volatility dampening: very choppy tape -> pull toward 0.5.
+        vol = momentum.volatility
+        vol_damp = max(0.6, 1.0 - vol * 40.0)
+        base = 0.5 + (base - 0.5) * vol_damp
 
-        # Adjust distance probability by volatility
-        vol_adjusted_prob = 0.5 + (distance_prob - 0.5) * vol_dampening
+        return max(0.50, min(0.98, base))
 
-        # Weighted combination
-        combined = (
-            self.WEIGHT_DISTANCE * distance_prob
-            + self.WEIGHT_MOMENTUM * momentum_prob
-            + self.WEIGHT_VOLATILITY * vol_adjusted_prob
-        )
-
-        # Clamp to valid probability range
-        return max(0.02, min(0.98, combined))
-
-    def _compute_momentum_score(self, momentum: MomentumData) -> float:
+    def _momentum_alignment(
+        self, momentum: MomentumData, tape_direction: str
+    ) -> float:
         """
-        Compute a momentum score from -1 (strong bearish) to +1 (strong bullish).
-
-        Factors:
-        - EMA crossover direction
-        - RSI (overbought/oversold)
-        - 5-minute price momentum
-        - Price position relative to fast EMA
+        Return a value in [-1, +1] measuring how well short-term
+        momentum agrees with the tape direction.
         """
+        # Positive score = bullish, negative = bearish.
         score = 0.0
 
-        # EMA crossover (+/- 0.3)
         if momentum.crossover == "bullish":
-            score += 0.3
+            score += 0.4
         elif momentum.crossover == "bearish":
-            score -= 0.3
+            score -= 0.4
 
-        # RSI signal (+/- 0.2)
-        if momentum.rsi > 70:
-            score -= 0.1  # Overbought, potential reversal
-        elif momentum.rsi < 30:
-            score += 0.1  # Oversold, potential bounce
-        elif momentum.rsi > 55:
-            score += 0.1  # Mild bullish
-        elif momentum.rsi < 45:
-            score -= 0.1  # Mild bearish
+        # RSI: only the extremes matter for a 5-min window.
+        if momentum.rsi > 65:
+            score += 0.2
+        elif momentum.rsi < 35:
+            score -= 0.2
 
-        # 5-minute momentum (+/- 0.3)
-        mom_5m = momentum.momentum_5m
-        if mom_5m > 0.001:  # > 0.1% up in 5 min
-            score += min(0.3, mom_5m * 100)
-        elif mom_5m < -0.001:
-            score += max(-0.3, mom_5m * 100)
+        # 5-minute momentum (how much BTC moved over the last 5 min)
+        mom5 = momentum.momentum_5m
+        if mom5 > 0.0005:
+            score += min(0.4, mom5 * 200)
+        elif mom5 < -0.0005:
+            score += max(-0.4, mom5 * 200)
 
-        # Price vs EMA (+/- 0.2)
-        pve = momentum.price_vs_ema
-        if pve > 0:
-            score += min(0.2, pve * 50)
-        else:
-            score += max(-0.2, pve * 50)
+        score = max(-1.0, min(1.0, score))
 
-        return max(-1.0, min(1.0, score))
+        # If tape is NO (BTC below strike), a bearish score HELPS us,
+        # so flip the sign to align with the tape direction.
+        if tape_direction == "NO":
+            score = -score
+
+        return score
