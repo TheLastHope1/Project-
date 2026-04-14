@@ -2,7 +2,13 @@ import logging
 import time
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds
+from py_clob_client.constants import POLYGON
 import config
+
+# Signature type 1 = POLY_PROXY (Polymarket's email-signup embedded wallet with
+# a Gnosis-style proxy that holds USDC). Signature type 0 = EOA (raw wallet).
+# Signature type 2 = POLY_GNOSIS_SAFE (older browser-wallet proxy).
+SIG_TYPE_POLY_PROXY = 1
 
 logger = logging.getLogger("polymarket_bot.client")
 
@@ -22,11 +28,26 @@ class PolymarketClient:
             )
 
         logger.info("Initializing Polymarket CLOB client...")
-        self.client = ClobClient(
-            host=config.CLOB_API_URL,
-            key=config.PRIVATE_KEY,
-            chain_id=config.CHAIN_ID,
-        )
+
+        # If a funder address is provided, we're using Polymarket's email-based
+        # embedded wallet which routes orders through a proxy contract. In that
+        # case we must pass signature_type=POLY_PROXY and the funder address
+        # directly into the ClobClient constructor.
+        if config.POLYMARKET_FUNDER_ADDRESS:
+            self.client = ClobClient(
+                host=config.CLOB_API_URL,
+                key=config.PRIVATE_KEY,
+                chain_id=config.CHAIN_ID,
+                signature_type=SIG_TYPE_POLY_PROXY,
+                funder=config.POLYMARKET_FUNDER_ADDRESS,
+            )
+        else:
+            # Raw EOA wallet (private key IS the funder).
+            self.client = ClobClient(
+                host=config.CLOB_API_URL,
+                key=config.PRIVATE_KEY,
+                chain_id=config.CHAIN_ID,
+            )
 
         # Derive or use provided API credentials
         if config.POLYMARKET_API_KEY and config.POLYMARKET_API_SECRET:
@@ -42,10 +63,6 @@ class PolymarketClient:
             self.api_creds = self.client.create_or_derive_api_creds()
             self.client.set_api_creds(self.api_creds)
             logger.info("API credentials derived successfully.")
-
-        # Set funder address if provided (for proxy wallets)
-        if config.POLYMARKET_FUNDER_ADDRESS:
-            self.client.set_funder(config.POLYMARKET_FUNDER_ADDRESS)
 
         # Verify connectivity
         if not self._check_connection():
