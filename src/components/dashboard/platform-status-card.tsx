@@ -14,7 +14,7 @@ export interface PlatformStatusInfo {
 }
 
 interface PlatformStatusCardProps {
-  statuses: Record<string, PlatformStatusInfo>;
+  statuses?: Record<string, PlatformStatusInfo>;
 }
 
 export function PlatformStatusCard({ statuses }: PlatformStatusCardProps) {

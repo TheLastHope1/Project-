@@ -100,7 +100,7 @@ export function PriceChart({
               minute: '2-digit',
             })
           }
-          formatter={(value: number) => [formatPrice(value), 'YES Price']}
+          formatter={(value) => [formatPrice(Number(value)), 'YES Price']}
         />
         <Area
           type="monotone"
