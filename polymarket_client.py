@@ -5,10 +5,13 @@ from py_clob_client.clob_types import ApiCreds
 from py_clob_client.constants import POLYGON
 import config
 
-# Signature type 1 = POLY_PROXY (Polymarket's email-signup embedded wallet with
-# a Gnosis-style proxy that holds USDC). Signature type 0 = EOA (raw wallet).
-# Signature type 2 = POLY_GNOSIS_SAFE (older browser-wallet proxy).
+# Signature type 1 = POLY_PROXY       (older browser-wallet proxy).
+# Signature type 2 = POLY_GNOSIS_SAFE  (Polymarket email signup - Magic.link).
+# Signature type 0 = EOA               (raw wallet, no proxy).
+# Most accounts today are Gnosis Safe (type 2). If orders fail with
+# "invalid signature", the type does not match the on-chain contract.
 SIG_TYPE_POLY_PROXY = 1
+SIG_TYPE_POLY_GNOSIS_SAFE = 2
 
 # USDC on Polygon has 6 decimals.
 USDC_DECIMALS = 6
@@ -32,20 +35,32 @@ class PolymarketClient:
 
         logger.info("Initializing Polymarket CLOB client...")
 
-        # If a funder address is provided, we're using Polymarket's email-based
-        # embedded wallet which routes orders through a proxy contract. In that
-        # case we must pass signature_type=POLY_PROXY and the funder address
-        # directly into the ClobClient constructor.
+        # If a funder address is provided, we're using a Polymarket proxy
+        # wallet (either Gnosis Safe from email signup, or the older
+        # POLY_PROXY from browser signup). The signature_type must match
+        # the actual contract behind your funder address; otherwise
+        # Polymarket rejects every order with "invalid signature".
         if config.POLYMARKET_FUNDER_ADDRESS:
+            sig_type = config.POLYMARKET_SIGNATURE_TYPE
+            sig_name = {
+                0: "EOA",
+                1: "POLY_PROXY",
+                2: "POLY_GNOSIS_SAFE",
+            }.get(sig_type, f"UNKNOWN({sig_type})")
+            logger.info(
+                f"Using funder {config.POLYMARKET_FUNDER_ADDRESS} with "
+                f"signature_type={sig_type} ({sig_name})."
+            )
             self.client = ClobClient(
                 host=config.CLOB_API_URL,
                 key=config.PRIVATE_KEY,
                 chain_id=config.CHAIN_ID,
-                signature_type=SIG_TYPE_POLY_PROXY,
+                signature_type=sig_type,
                 funder=config.POLYMARKET_FUNDER_ADDRESS,
             )
         else:
             # Raw EOA wallet (private key IS the funder).
+            logger.info("Using EOA wallet (no funder/proxy).")
             self.client = ClobClient(
                 host=config.CLOB_API_URL,
                 key=config.PRIVATE_KEY,
@@ -162,7 +177,7 @@ class PolymarketClient:
             params = BalanceAllowanceParams(
                 asset_type=AssetType.COLLATERAL,
                 signature_type=(
-                    SIG_TYPE_POLY_PROXY
+                    config.POLYMARKET_SIGNATURE_TYPE
                     if config.POLYMARKET_FUNDER_ADDRESS
                     else 0
                 ),

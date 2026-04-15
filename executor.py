@@ -67,8 +67,18 @@ class OrderExecutor:
                 return OrderResult(success=False, error=error_msg)
 
         except Exception as e:
-            logger.error(f"Market order exception: {e}")
-            return OrderResult(success=False, error=str(e))
+            msg = str(e)
+            if "invalid signature" in msg.lower():
+                logger.error(
+                    "Market order rejected with 'invalid signature'. This almost "
+                    "always means POLYMARKET_SIGNATURE_TYPE does not match your "
+                    "wallet's on-chain contract. Try flipping it in .env "
+                    "(email-signup accounts are type 2, older browser accounts "
+                    "are type 1)."
+                )
+            else:
+                logger.error(f"Market order exception: {e}")
+            return OrderResult(success=False, error=msg)
 
     def place_limit_order(
         self, token_id: str, price: float, size: float
