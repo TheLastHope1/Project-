@@ -50,3 +50,13 @@ MARKET_WINDOW_SECONDS = 300     # 5-minute market windows
 
 # Dry run mode (paper trading)
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+
+# ── Dashboard (local web UI) ────────────────────────────────────────
+# Visit http://localhost:<port> on the machine running the bot, or
+# http://<mac-lan-ip>:<port> from your phone on the same WiFi.
+DASHBOARD_ENABLED = os.getenv("DASHBOARD_ENABLED", "true").lower() == "true"
+DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")  # 0.0.0.0 = LAN-visible
+DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
+# Token is auto-generated on first run into .dashboard_token. Anything
+# set here via env wins.
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")

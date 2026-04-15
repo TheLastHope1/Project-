@@ -1,6 +1,7 @@
 import logging
 import time
 import sys
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 import config
@@ -11,6 +12,7 @@ from strategy import TradingStrategy
 from risk_manager import RiskManager
 from executor import OrderExecutor
 from tracker import TradeTracker
+from state import bot_state
 
 logger = logging.getLogger("polymarket_bot")
 
@@ -46,6 +48,16 @@ class TradingBot:
         self._running = False
         self._cycle_count = 0
         self._start_time = time.time()
+
+        # Publish initial state for the dashboard.
+        bot_state.update(
+            dry_run=self.dry_run,
+            starting_capital=config.STARTING_CAPITAL,
+            current_capital=config.STARTING_CAPITAL,
+            peak_capital=config.STARTING_CAPITAL,
+            start_time=self._start_time,
+            current_status="initializing",
+        )
 
     def initialize(self):
         """Set up connections and verify everything works."""
@@ -86,11 +98,43 @@ class TradingBot:
         """Main trading loop. Runs 24/7 until manually interrupted."""
         self._running = True
         self._start_time = time.time()
+        bot_state.update(
+            running=True,
+            start_time=self._start_time,
+            current_status="running",
+        )
 
         while self._running:
             try:
+                # Honour dashboard shutdown request.
+                if bot_state.shutdown_requested:
+                    logger.info("Shutdown requested via dashboard.")
+                    break
+
+                # Honour dashboard dry-run / live mode toggle.
+                override = bot_state.consume_dry_run_override()
+                if override is not None and override != self.dry_run:
+                    logger.warning(
+                        f"Mode switch via dashboard: "
+                        f"{'DRY RUN' if self.dry_run else 'LIVE'} -> "
+                        f"{'DRY RUN' if override else 'LIVE'}"
+                    )
+                    self.dry_run = override
+                    if self.executor is not None:
+                        self.executor.dry_run = override
+                    bot_state.update(dry_run=override)
+
+                # Honour cancel-all request (live mode only).
+                if bot_state.consume_cancel_all():
+                    if self.executor and not self.dry_run:
+                        logger.warning("Dashboard: cancelling all open orders.")
+                        self.executor.cancel_all_orders()
+                    else:
+                        logger.info("Dashboard: cancel-all no-op in dry run.")
+
                 self._run_cycle()
                 self._cycle_count += 1
+                self._publish_state()
             except KeyboardInterrupt:
                 logger.info("Shutdown requested by user.")
                 break
@@ -99,6 +143,7 @@ class TradingBot:
                 # Brief pause on error, then keep going
                 time.sleep(5)
 
+        bot_state.update(running=False, current_status="shutting down")
         self._shutdown()
 
     def _run_cycle(self):
@@ -131,6 +176,9 @@ class TradingBot:
 
         # Step 4: Process each market
         traded = False
+        paused = bot_state.paused
+        if paused:
+            bot_state.update(current_status="paused (no new trades)")
         for market in markets:
             seconds_left = market.seconds_until_close
 
@@ -158,7 +206,10 @@ class TradingBot:
                 )
                 continue
 
-            # Step 5: Analyze and trade
+            # Step 5: Analyze and trade (paused = monitor only, no new trades)
+            if paused:
+                logger.debug(f"Paused: skipping trade on {market.slug}.")
+                continue
             if self._analyze_and_trade(market):
                 traded = True
 
@@ -182,6 +233,18 @@ class TradingBot:
         if not price_snapshot:
             logger.warning("Could not get BTC price. Skipping market.")
             return False
+
+        # Publish what we're watching so the dashboard can show it live.
+        bot_state.update(
+            current_btc_price=price_snapshot.price,
+            current_market={
+                "slug": market.slug,
+                "question": market.question,
+                "strike": market.strike_price,
+                "seconds_left": market.seconds_until_close,
+            },
+            current_status=f"watching {market.slug}",
+        )
 
         # Fetch candles and compute momentum
         candles = self.price_feed.get_recent_candles(
@@ -345,6 +408,55 @@ class TradingBot:
             f"Token price: {token_price}. Assuming loss."
         )
         return False
+
+    def _publish_state(self):
+        """Push current bot state to the shared store the dashboard reads."""
+        try:
+            rm = self.risk_manager
+            summary = self.tracker.get_summary()
+            baseline = rm._live_starting_capital or config.STARTING_CAPITAL
+
+            open_positions = [
+                {
+                    "market_slug": p.market_slug,
+                    "direction": p.direction,
+                    "cost_basis": p.cost_basis,
+                    "entry_price": p.entry_price,
+                    "window_end": p.window_end,
+                }
+                for p in self.tracker.get_open_positions()
+            ]
+            recent = [asdict(r) for r in self.tracker.trade_history[-20:]]
+
+            # Streak: peek at tracker's string like "3 WON"
+            streak_str = summary.get("streak", "")
+            streak_n = 0
+            streak_type = ""
+            if streak_str and streak_str != "None":
+                parts = streak_str.split()
+                if len(parts) == 2 and parts[0].isdigit():
+                    streak_n = int(parts[0])
+                    streak_type = parts[1]
+
+            bot_state.update(
+                dry_run=self.dry_run,
+                starting_capital=baseline,
+                current_capital=rm.current_capital,
+                peak_capital=rm.peak_capital,
+                total_pnl=rm.total_pnl,
+                total_exposure=rm.total_exposure,
+                available=max(0.0, rm.current_capital - rm.total_exposure),
+                session_trades=summary["total_trades"],
+                session_wins=summary["wins"],
+                session_losses=summary["losses"],
+                current_streak=streak_n,
+                streak_type=streak_type,
+                open_positions=open_positions,
+                recent_trades=recent,
+            )
+            bot_state.add_capital_point(rm.current_capital)
+        except Exception as e:
+            logger.debug(f"Failed to publish state: {e}")
 
     def _shutdown(self):
         """Clean shutdown."""

@@ -32,11 +32,17 @@ def setup_logging():
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(log_format, date_format))
 
+    # Dashboard ring-buffer handler: surface logs in the web UI.
+    from state import bot_state, StateLogHandler
+    state_handler = StateLogHandler(bot_state)
+    state_handler.setLevel(logging.INFO)
+
     # Root logger
     root_logger = logging.getLogger("polymarket_bot")
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+    root_logger.addHandler(state_handler)
 
     return root_logger
 
@@ -99,6 +105,10 @@ def main():
         print("\nSee README.md for setup instructions.")
         sys.exit(1)
 
+    # Start the dashboard (non-blocking, daemon thread).
+    from dashboard import start_dashboard
+    dashboard_server = start_dashboard()
+
     # Run the bot
     from bot import TradingBot
 
@@ -111,6 +121,9 @@ def main():
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        if dashboard_server is not None:
+            dashboard_server.shutdown()
 
 
 if __name__ == "__main__":

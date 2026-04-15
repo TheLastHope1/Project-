@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Polymarket BTC Bot</title>
+  <link rel="icon" href="data:," />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:        #0b0e13;
+      --panel:     #141922;
+      --panel-2:   #1a2030;
+      --border:    #242c3c;
+      --text:      #e7ecf3;
+      --muted:     #8592a6;
+      --accent:    #6ee7b7;
+      --accent-2:  #7dd3fc;
+      --danger:    #f87171;
+      --warn:      #fbbf24;
+      --ok:        #34d399;
+      --red:       #ef4444;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    Inter, "Helvetica Neue", Arial, sans-serif;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent-2); text-decoration: none; }
+    header {
+      position: sticky; top: 0; z-index: 5;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap;
+    }
+    header h1 {
+      font-size: 15px; margin: 0;
+      font-weight: 600; letter-spacing: 0.3px;
+    }
+    .mode-badge {
+      font-size: 11px; padding: 3px 8px; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .mode-badge.live { background: #3a1616; border-color: #632525; color: #fca5a5; }
+    .mode-badge.dry  { background: #1a2030; border-color: #2a354a; color: var(--accent-2); }
+    .mode-badge.paused { background: #3a2f13; border-color: #63511c; color: var(--warn); }
+    .spacer { flex: 1; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+    }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .dot.warn { background: var(--warn); }
+    .dot.err { background: var(--red); }
+
+    main {
+      padding: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .card h3 {
+      margin: 0 0 6px; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--muted); font-weight: 600;
+    }
+    .card .val {
+      font-size: 22px; font-weight: 600; line-height: 1.1;
+    }
+    .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .pos { color: var(--ok); }
+    .neg { color: var(--danger); }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .panel h2 {
+      margin: 0 0 10px; font-size: 13px;
+      text-transform: uppercase; letter-spacing: 1px;
+      color: var(--muted); font-weight: 600;
+    }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    th, td {
+      padding: 7px 8px; text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    th { color: var(--muted); font-weight: 500; font-size: 11px;
+         text-transform: uppercase; letter-spacing: 0.5px; }
+    tr:last-child td { border-bottom: 0; }
+    .table-wrap { overflow-x: auto; }
+
+    .controls {
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    button, .btn {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.1s, border 0.1s;
+    }
+    button:hover { background: #222a3c; border-color: #334055; }
+    button:active { transform: translateY(1px); }
+    button.primary { background: #1b3a2b; border-color: #275c42; color: var(--ok); }
+    button.primary:hover { background: #235039; }
+    button.warn    { background: #3a2f13; border-color: #63511c; color: var(--warn); }
+    button.warn:hover { background: #4a3c1a; }
+    button.danger  { background: #3a1616; border-color: #632525; color: var(--danger); }
+    button.danger:hover { background: #4a1c1c; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .logs {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      max-height: 260px;
+      overflow-y: auto;
+      background: #0b0e13;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .log-line { padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+    .log-DEBUG  { color: #566071; }
+    .log-INFO   { color: var(--text); }
+    .log-WARNING{ color: var(--warn); }
+    .log-ERROR  { color: var(--danger); }
+    .log-time   { color: var(--muted); }
+
+    .chart-wrap { position: relative; height: 220px; }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .form-row label { color: var(--muted); }
+    .form-row input {
+      width: 110px;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 13px;
+      text-align: right;
+    }
+    .form-row input:focus { outline: 1px solid var(--accent-2); }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .toast.show { opacity: 1; }
+    @media (max-width: 520px) {
+      .card .val { font-size: 18px; }
+      header h1 { font-size: 13px; }
+      main { padding: 12px; }
+      th, td { padding: 6px 6px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="dot" id="health-dot"></span>
+  <h1>Polymarket BTC Bot</h1>
+  <span class="mode-badge" id="mode-badge">…</span>
+  <span class="mode-badge" id="paused-badge" style="display:none">PAUSED</span>
+  <span class="spacer"></span>
+  <span id="uptime" style="color: var(--muted); font-size: 12px;"></span>
+</header>
+
+<main>
+
+  <!-- KPI grid -->
+  <div class="grid">
+    <div class="card">
+      <h3>Capital</h3>
+      <div class="val" id="kpi-capital">–</div>
+      <div class="sub" id="kpi-capital-sub">&nbsp;</div>
+    </div>
+    <div class="card">
+      <h3>Session PnL</h3>
+      <div class="val" id="kpi-pnl">–</div>
+      <div class="sub" id="kpi-pnl-sub">&nbsp;</div>
+    </div>
+    <div class="card">
+      <h3>Win Rate</h3>
+      <div class="val" id="kpi-winrate">–</div>
+      <div class="sub" id="kpi-winrate-sub">&nbsp;</div>
+    </div>
+    <div class="card">
+      <h3>BTC Price</h3>
+      <div class="val" id="kpi-btc">–</div>
+      <div class="sub" id="kpi-btc-sub">Binance live</div>
+    </div>
+    <div class="card">
+      <h3>Exposure</h3>
+      <div class="val" id="kpi-exposure">–</div>
+      <div class="sub" id="kpi-exposure-sub">&nbsp;</div>
+    </div>
+    <div class="card">
+      <h3>Peak</h3>
+      <div class="val" id="kpi-peak">–</div>
+      <div class="sub">All-time session high</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="panel">
+    <h2>Controls</h2>
+    <div class="controls">
+      <button id="btn-pause"     class="warn">Pause</button>
+      <button id="btn-resume"    class="primary">Resume</button>
+      <button id="btn-cancelall" class="danger">Cancel All Orders</button>
+      <button id="btn-live"      class="danger" title="Switch to LIVE (real money)">Switch LIVE</button>
+      <button id="btn-dry"                       title="Switch to DRY RUN (paper)">Switch DRY</button>
+      <button id="btn-shutdown"  class="danger">Shutdown Bot</button>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="panel">
+    <h2>Capital History</h2>
+    <div class="chart-wrap"><canvas id="capitalChart"></canvas></div>
+  </div>
+
+  <!-- Open positions -->
+  <div class="panel">
+    <h2>Open Positions (<span id="open-count">0</span>)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Dir</th><th>Market</th><th>Cost</th><th>Entry</th><th>Closes</th>
+          </tr>
+        </thead>
+        <tbody id="open-positions"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent trades -->
+  <div class="panel">
+    <h2>Recent Trades</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Dir</th><th>Market</th>
+            <th>Size</th><th>Edge</th><th>Outcome</th><th>PnL</th>
+          </tr>
+        </thead>
+        <tbody id="recent-trades"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="panel">
+    <h2>Config (live-editable)</h2>
+    <div id="config-form"></div>
+    <button id="btn-save-config" class="primary" style="margin-top:8px">Save Changes</button>
+  </div>
+
+  <!-- Logs -->
+  <div class="panel">
+    <h2>Live Logs</h2>
+    <div class="logs" id="logs"></div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---- bootstrap: get token from ?token= or localStorage ---- */
+(function () {
+  const url = new URL(window.location.href);
+  const tok = url.searchParams.get("token");
+  if (tok) {
+    localStorage.setItem("dashboardToken", tok);
+    url.searchParams.delete("token");
+    window.history.replaceState({}, "", url.toString());
+  }
+})();
+const TOKEN = localStorage.getItem("dashboardToken") || "";
+
+function api(path, opts = {}) {
+  const headers = Object.assign(
+    { "Content-Type": "application/json", "X-Token": TOKEN },
+    opts.headers || {}
+  );
+  return fetch(path, Object.assign({}, opts, { headers })).then(async (r) => {
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { msg = (await r.json()).error || msg; } catch {}
+      throw new Error(`${r.status}: ${msg}`);
+    }
+    return r.json();
+  });
+}
+
+const toastEl = document.getElementById("toast");
+let toastTimer = null;
+function toast(msg, isErr = false) {
+  toastEl.textContent = msg;
+  toastEl.style.borderColor = isErr ? "var(--red)" : "var(--border)";
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2400);
+}
+
+/* ---- formatters ---- */
+const fmtUSD = (v) => "$" + (v ?? 0).toFixed(2);
+const fmtPct = (v) => (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
+const fmtUptime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
+};
+const fmtTime = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString();
+};
+const fmtTimeShort = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+function fmtCountdown(closeTs) {
+  if (!closeTs) return "";
+  const now = Date.now() / 1000;
+  const s = Math.max(0, closeTs - now);
+  if (s < 60) return s.toFixed(0) + "s";
+  return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+}
+
+/* ---- chart ---- */
+const chartCtx = document.getElementById("capitalChart").getContext("2d");
+const capitalChart = new Chart(chartCtx, {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [{
+      label: "Capital",
+      data: [],
+      borderColor: "#6ee7b7",
+      backgroundColor: "rgba(110, 231, 183, 0.10)",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      borderWidth: 2,
+    }],
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        ticks: { color: "#8592a6", maxTicksLimit: 6 },
+        grid:  { color: "#1f2736" },
+      },
+      y: {
+        ticks: { color: "#8592a6", callback: (v) => "$" + v.toFixed(0) },
+        grid:  { color: "#1f2736" },
+      },
+    },
+  },
+});
+
+/* ---- render ---- */
+let baseline = null;     // first capital point we see, used for growth %
+function renderStatus(s) {
+  // mode badges
+  const modeEl = document.getElementById("mode-badge");
+  modeEl.textContent = s.dry_run ? "DRY RUN" : "LIVE";
+  modeEl.className = "mode-badge " + (s.dry_run ? "dry" : "live");
+  document.getElementById("paused-badge").style.display = s.paused ? "inline" : "none";
+
+  // dot
+  const dot = document.getElementById("health-dot");
+  dot.className = "dot " + (s.running ? "ok" : "warn");
+
+  // uptime
+  document.getElementById("uptime").textContent = "up " + fmtUptime(s.uptime_seconds);
+
+  // KPIs
+  const startCap = s.starting_capital || baseline || s.current_capital;
+  if (!baseline) baseline = startCap;
+  const growth = baseline ? ((s.current_capital - baseline) / baseline) * 100 : 0;
+
+  document.getElementById("kpi-capital").textContent = fmtUSD(s.current_capital);
+  document.getElementById("kpi-capital-sub").innerHTML =
+    `<span class="${growth >= 0 ? 'pos' : 'neg'}">${fmtPct(growth)}</span> from ${fmtUSD(baseline)}`;
+
+  const pnlEl = document.getElementById("kpi-pnl");
+  pnlEl.textContent = (s.total_pnl >= 0 ? "+" : "") + fmtUSD(s.total_pnl);
+  pnlEl.className = "val " + (s.total_pnl >= 0 ? "pos" : "neg");
+  document.getElementById("kpi-pnl-sub").textContent =
+    `${s.session_wins}W / ${s.session_losses}L over ${s.session_trades} trades`;
+
+  document.getElementById("kpi-winrate").textContent = s.win_rate.toFixed(1) + "%";
+  document.getElementById("kpi-winrate-sub").textContent =
+    s.current_streak
+      ? `${s.current_streak} ${s.streak_type || ""} streak`
+      : "No streak";
+
+  document.getElementById("kpi-btc").textContent =
+    s.current_btc_price ? fmtUSD(s.current_btc_price) : "–";
+  document.getElementById("kpi-btc-sub").textContent =
+    s.current_market
+      ? `Strike $${(s.current_market.strike || 0).toLocaleString()}, ${s.current_market.seconds_left || 0}s left`
+      : (s.current_status || "watching");
+
+  document.getElementById("kpi-exposure").textContent = fmtUSD(s.total_exposure);
+  document.getElementById("kpi-exposure-sub").textContent =
+    `Available ${fmtUSD(s.available)}`;
+
+  document.getElementById("kpi-peak").textContent = fmtUSD(s.peak_capital);
+
+  // open positions
+  const posBody = document.getElementById("open-positions");
+  document.getElementById("open-count").textContent = s.open_positions.length;
+  if (!s.open_positions.length) {
+    posBody.innerHTML = `<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:14px">No open positions.</td></tr>`;
+  } else {
+    posBody.innerHTML = s.open_positions.map((p) => `
+      <tr>
+        <td class="${p.direction === 'YES' ? 'pos' : 'neg'}">${p.direction}</td>
+        <td>${p.market_slug || p.slug || ""}</td>
+        <td>${fmtUSD(p.cost_basis)}</td>
+        <td>${(p.entry_price ?? 0).toFixed(3)}</td>
+        <td>${fmtCountdown(p.window_end)}</td>
+      </tr>`).join("");
+  }
+
+  // recent trades (reverse so newest on top)
+  const trBody = document.getElementById("recent-trades");
+  const trades = (s.recent_trades || []).slice().reverse();
+  if (!trades.length) {
+    trBody.innerHTML = `<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:14px">No trades yet.</td></tr>`;
+  } else {
+    trBody.innerHTML = trades.map((t) => {
+      const pnl = t.pnl || 0;
+      const pnlClass = pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
+      const outCls = t.outcome === "WIN" ? "pos" : t.outcome === "LOSS" ? "neg" : "";
+      const ts = t.timestamp ? Date.parse(t.timestamp) / 1000 : null;
+      return `<tr>
+        <td>${ts ? fmtTimeShort(ts) : ""}</td>
+        <td class="${t.direction === 'YES' ? 'pos' : 'neg'}">${t.direction || ""}</td>
+        <td>${t.market_slug || ""}</td>
+        <td>${fmtUSD(t.bet_size)}</td>
+        <td>${((t.edge || 0) * 100).toFixed(1)}%</td>
+        <td class="${outCls}">${t.outcome || ""}</td>
+        <td class="${pnlClass}">${pnl ? (pnl >= 0 ? "+" : "") + fmtUSD(pnl) : ""}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  // chart
+  if (s.capital_history && s.capital_history.length) {
+    capitalChart.data.labels = s.capital_history.map((p) => fmtTime(p.t));
+    capitalChart.data.datasets[0].data = s.capital_history.map((p) => p.v);
+    capitalChart.update("none");
+  }
+}
+
+/* ---- logs ---- */
+const logsEl = document.getElementById("logs");
+function renderLogs(logs) {
+  const lines = logs.map((l) => {
+    const t = new Date(l.time * 1000).toLocaleTimeString();
+    return `<div class="log-line log-${l.level}"><span class="log-time">${t}</span>  ${l.level[0]}  ${escapeHtml(l.message)}</div>`;
+  });
+  const wasBottom =
+    logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
+  logsEl.innerHTML = lines.join("");
+  if (wasBottom) logsEl.scrollTop = logsEl.scrollHeight;
+}
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+}
+
+/* ---- config form ---- */
+const CFG_LABELS = {
+  MAX_BET_SIZE: "Max bet size ($)",
+  MIN_BET_SIZE: "Min bet size ($)",
+  MAX_CONCURRENT_POSITIONS: "Max concurrent positions",
+  MAX_BET_FRACTION: "Max bet % of capital",
+  KELLY_FRACTION: "Kelly fraction",
+  MIN_EDGE_THRESHOLD: "Min edge (0-1)",
+  MIN_TAKE_PRICE: "Min take price",
+  MAX_TAKE_PRICE: "Max take price",
+};
+async function loadConfig() {
+  try {
+    const cfg = await api("/api/config");
+    const wrap = document.getElementById("config-form");
+    wrap.innerHTML = Object.keys(CFG_LABELS).map((k) => `
+      <div class="form-row">
+        <label for="cfg-${k}">${CFG_LABELS[k]}</label>
+        <input id="cfg-${k}" type="number" step="any" value="${cfg[k] ?? ''}">
+      </div>
+    `).join("");
+  } catch (e) { toast("Config load: " + e.message, true); }
+}
+async function saveConfig() {
+  const payload = {};
+  Object.keys(CFG_LABELS).forEach((k) => {
+    const el = document.getElementById("cfg-" + k);
+    if (!el) return;
+    const v = parseFloat(el.value);
+    if (!Number.isNaN(v)) payload[k] = v;
+  });
+  try {
+    const r = await api("/api/config", { method: "POST", body: JSON.stringify(payload) });
+    const n = Object.keys(r.applied || {}).length;
+    const errs = Object.keys(r.errors || {}).length;
+    toast(`Saved ${n} field${n === 1 ? "" : "s"}` + (errs ? ` (${errs} errors)` : ""), errs > 0);
+  } catch (e) { toast("Save failed: " + e.message, true); }
+}
+
+/* ---- controls ---- */
+function wireButton(id, path, confirmMsg, method = "POST", body) {
+  document.getElementById(id).addEventListener("click", async () => {
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    try {
+      await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+      toast("OK");
+      poll();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+wireButton("btn-pause",     "/api/control/pause");
+wireButton("btn-resume",    "/api/control/resume");
+wireButton("btn-cancelall", "/api/control/cancel_all",
+           "Cancel ALL open Polymarket orders?");
+wireButton("btn-shutdown",  "/api/control/shutdown",
+           "Shut down the bot? You'll need to restart it on the Mac.");
+wireButton("btn-live",      "/api/control/dry_run",
+           "Switch to LIVE trading? Real USDC will be used.",
+           "POST", { dry_run: false });
+wireButton("btn-dry",       "/api/control/dry_run",
+           "Switch to DRY RUN (paper)?",
+           "POST", { dry_run: true });
+document.getElementById("btn-save-config").addEventListener("click", saveConfig);
+
+/* ---- polling ---- */
+async function poll() {
+  try {
+    const s = await api("/api/status");
+    renderStatus(s);
+  } catch (e) {
+    document.getElementById("health-dot").className = "dot err";
+    if (e.message.startsWith("401")) {
+      toast("Bad/missing token. Re-open the URL with ?token=...", true);
+    }
+  }
+  try {
+    const { logs } = await api("/api/logs?limit=150");
+    renderLogs(logs);
+  } catch {}
+}
+
+loadConfig();
+poll();
+setInterval(poll, 2000);
+</script>
+
+</body>
+</html>
