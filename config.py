@@ -20,10 +20,10 @@ CHAIN_ID = 137  # Polygon mainnet
 STARTING_CAPITAL = 150.0
 
 # Risk management
-MAX_BET_SIZE = 30.0          # Max USDC per trade
+MAX_BET_SIZE = 20.0          # Max USDC per trade
 MIN_BET_SIZE = 5.0           # Min USDC per trade
 MAX_CONCURRENT_POSITIONS = 3 # One per window is enforced separately
-MAX_BET_FRACTION = 0.20      # Max 20% of capital per trade
+MAX_BET_FRACTION = 0.12      # Max 12% of capital per trade (cap single-loss damage)
 KELLY_FRACTION = 0.25        # Quarter-Kelly - tape-following is new, stay humble
 
 # Compounding: trade sizes grow with capital
@@ -34,6 +34,11 @@ GROWTH_TARGET_DAILY = 0.10    # Target 10% daily growth (informational)
 MIN_EDGE_THRESHOLD = 0.08    # 8% min edge (tape must clearly beat market)
 ENTRY_SECONDS_BEFORE_CLOSE = 45  # Enter in final 45s - tape is most reliable late
 LATEST_ENTRY_SECONDS = 10       # Don't enter after T-10s
+# Only take the "winning" side when its price is in this band.
+# Below MIN: market disagrees with the tape - don't fight it.
+# Above MAX: upside too small - one loss wipes out too many wins.
+MIN_TAKE_PRICE = 0.50
+MAX_TAKE_PRICE = 0.85
 LOOKBACK_CANDLES = 30           # 30 x 1-min candles for momentum
 EMA_FAST_PERIOD = 5
 EMA_SLOW_PERIOD = 15

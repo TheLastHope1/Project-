@@ -40,12 +40,6 @@ class TradingStrategy:
     # (in % of BTC price). Inside this band it's a coin flip — we skip.
     COIN_FLIP_BAND_PCT = 0.0004   # 0.04% = ~$30 on $75k BTC
 
-    # Market price bounds we'll take the "winning" side at.
-    # Below MIN_TAKE_PRICE: too uncertain, something's off -> skip.
-    # Above MAX_TAKE_PRICE: no upside worth the risk -> skip.
-    MIN_TAKE_PRICE = 0.50
-    MAX_TAKE_PRICE = 0.92
-
     def analyze(
         self,
         market: MarketInfo,
@@ -98,19 +92,19 @@ class TradingStrategy:
             bet_token = market.no_token_id
 
         # Is the tape-direction ticket priced in a zone we'll take?
-        if take_price < self.MIN_TAKE_PRICE:
+        if take_price < config.MIN_TAKE_PRICE:
             # Market disagrees with where the tape is - something's off,
             # or there's big momentum against us. Don't fight the market.
             logger.info(
                 f"SKIP {market.slug}: tape={tape_direction} but market disagrees "
-                f"(take_price={take_price:.3f} < {self.MIN_TAKE_PRICE})."
+                f"(take_price={take_price:.3f} < {config.MIN_TAKE_PRICE})."
             )
             return None
-        if take_price > self.MAX_TAKE_PRICE:
+        if take_price > config.MAX_TAKE_PRICE:
             # No edge left to capture - risking $X to make pennies.
             logger.info(
                 f"SKIP {market.slug}: {tape_direction} already fully priced "
-                f"(take_price={take_price:.3f} > {self.MAX_TAKE_PRICE})."
+                f"(take_price={take_price:.3f} > {config.MAX_TAKE_PRICE})."
             )
             return None
 
