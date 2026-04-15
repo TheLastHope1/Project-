@@ -9,6 +9,15 @@ from py_clob_client.order_builder.constants import BUY
 
 import config
 
+# py-clob-client >=0.15 ships PartialCreateOrderOptions which is how you
+# tell the builder to sign for the Neg Risk CTF Exchange instead of the
+# regular CTF Exchange. Not all installed versions have it - we detect
+# lazily and fall back if missing.
+try:
+    from py_clob_client.clob_types import PartialCreateOrderOptions  # type: ignore
+except Exception:  # pragma: no cover
+    PartialCreateOrderOptions = None  # type: ignore
+
 logger = logging.getLogger("polymarket_bot.executor")
 
 
@@ -30,19 +39,33 @@ class OrderExecutor:
         self.client = clob_client
         self.dry_run = dry_run
 
-    def place_market_order(self, token_id: str, amount: float) -> OrderResult:
+    def place_market_order(
+        self,
+        token_id: str,
+        amount: float,
+        neg_risk: bool = False,
+    ) -> OrderResult:
         """
         Place a Fill-or-Kill market order to buy tokens.
 
         Args:
             token_id: The token to buy (YES or NO token ID)
             amount: USDC amount to spend
+            neg_risk: True if this market lives on Polymarket's Neg Risk
+                CTF Exchange (e.g. the 5-min BTC up/down series). Orders
+                for neg-risk markets must be signed against that
+                contract's EIP-712 domain or the server rejects them
+                with "invalid signature".
         """
         if self.dry_run:
             return self._simulate_market_order(token_id, amount)
 
         try:
-            logger.info(f"Placing market order: BUY {token_id[:8]}... for ${amount:.2f}")
+            logger.info(
+                f"Placing market order: BUY {token_id[:8]}... for "
+                f"${amount:.2f}"
+                + (" [neg_risk]" if neg_risk else "")
+            )
 
             order_args = MarketOrderArgs(
                 token_id=token_id,
@@ -50,7 +73,13 @@ class OrderExecutor:
                 side=BUY,
             )
 
-            signed_order = self.client.create_market_order(order_args)
+            if neg_risk and PartialCreateOrderOptions is not None:
+                options = PartialCreateOrderOptions(neg_risk=True)
+                signed_order = self.client.create_market_order(
+                    order_args, options=options
+                )
+            else:
+                signed_order = self.client.create_market_order(order_args)
             result = self.client.post_order(signed_order, OrderType.FOK)
 
             if result and result.get("success"):

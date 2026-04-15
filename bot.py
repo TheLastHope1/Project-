@@ -317,6 +317,7 @@ class TradingBot:
         order_result = self.executor.place_market_order(
             token_id=signal.bet_token_id,
             amount=risk_decision.position_size,
+            neg_risk=getattr(market, "neg_risk", False),
         )
 
         if order_result.success:

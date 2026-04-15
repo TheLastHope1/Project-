@@ -10,10 +10,12 @@ POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET", "")
 POLYMARKET_API_PASSPHRASE = os.getenv("POLYMARKET_API_PASSPHRASE", "")
 POLYMARKET_FUNDER_ADDRESS = os.getenv("POLYMARKET_FUNDER_ADDRESS", "")
 # Polymarket wallet type:
-#   1 = POLY_PROXY         (older browser-wallet style)
-#   2 = POLY_GNOSIS_SAFE   (email signup - most accounts today)
-# If you get "invalid signature" when placing orders, try flipping this.
-POLYMARKET_SIGNATURE_TYPE = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "2"))
+#   1 = POLY_PROXY         (browser wallet proxy - what most "read .env"
+#                           users have; balance queries return the real
+#                           figure with this value).
+#   2 = POLY_GNOSIS_SAFE   (some email-signup accounts use a Gnosis Safe)
+# If balance queries return $0 here, flip to the other value.
+POLYMARKET_SIGNATURE_TYPE = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "1"))
 
 # ── API Endpoints ───────────────────────────────────────────────────
 CLOB_API_URL = "https://clob.polymarket.com"

@@ -24,6 +24,11 @@ class MarketInfo:
     window_start: datetime
     window_end: datetime
     market_id: str
+    # Polymarket now hosts most rapid-resolution markets (including the BTC
+    # up/down 5-min series) on the Neg Risk CTF Exchange instead of the
+    # regular CTF Exchange. Orders on those markets must be signed for the
+    # neg-risk contract or the server rejects them with "invalid signature".
+    neg_risk: bool = False
 
     @property
     def seconds_until_close(self) -> float:
@@ -200,6 +205,13 @@ class MarketScanner:
                     int(window_start.timestamp())
                 )
 
+            # Gamma API exposes this under a few names depending on version.
+            neg_risk = bool(
+                data.get("negRisk")
+                or data.get("neg_risk")
+                or data.get("negRiskMarketID")
+            )
+
             return MarketInfo(
                 slug=data.get("slug", ""),
                 condition_id=data.get("conditionId", data.get("condition_id", "")),
@@ -210,6 +222,7 @@ class MarketScanner:
                 window_start=window_start,
                 window_end=window_end,
                 market_id=data.get("id", ""),
+                neg_risk=neg_risk,
             )
         except Exception as e:
             logger.error(f"Failed to parse market: {e}")
