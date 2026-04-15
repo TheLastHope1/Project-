@@ -48,19 +48,30 @@ def main():
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Run with real money (default is dry-run/paper trading)",
+        help="Force live trading (overrides DRY_RUN in .env)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        default=True,
-        help="Run in paper trading mode (default)",
+        help="Force paper trading (overrides DRY_RUN in .env)",
     )
     args = parser.parse_args()
 
     # Setup
     logger = setup_logging()
-    dry_run = not args.live
+
+    # Load .env BEFORE reading config.DRY_RUN
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    # Determine mode: .env is authoritative, CLI flags can override.
+    import config
+    if args.live:
+        dry_run = False
+    elif args.dry_run:
+        dry_run = True
+    else:
+        dry_run = config.DRY_RUN
 
     if not dry_run:
         print("\n" + "!" * 60)
@@ -75,10 +86,6 @@ def main():
         except KeyboardInterrupt:
             print("\n  Cancelled.")
             sys.exit(0)
-
-    # Check for credentials
-    from dotenv import load_dotenv
-    load_dotenv()
 
     if not os.getenv("PRIVATE_KEY"):
         print("\nERROR: No credentials found.")
