@@ -36,9 +36,12 @@ class TradingStrategy:
     tape favours. We never bet against a correctly-priced market.
     """
 
-    # Minimum distance from strike to consider a direction "committed"
-    # (in % of BTC price). Inside this band it's a coin flip — we skip.
-    COIN_FLIP_BAND_PCT = 0.0004   # 0.04% = ~$30 on $75k BTC
+    # Coin-flip band scales with time remaining. A $6 lead with 60s left
+    # is noise; the same lead with 15s left is a real signal the tape
+    # has committed. Band shrinks linearly from 0.04% at T-60s down to
+    # 0.005% at T=0.
+    COIN_FLIP_BAND_MAX = 0.0004   # 0.04% = ~$30 on $75k (full window)
+    COIN_FLIP_BAND_MIN = 0.00005  # 0.005% = ~$4 on $75k (window nearly closed)
 
     def analyze(
         self,
@@ -73,11 +76,18 @@ class TradingStrategy:
         # ---- The tape ----
         distance_pct = (price.price - strike) / strike
 
-        # Coin-flip zone: BTC is too close to strike for a reliable call.
-        if abs(distance_pct) < self.COIN_FLIP_BAND_PCT:
+        # Coin-flip zone scales with time remaining: wide early, narrow late.
+        # At T-60s we want ~$30 of lead; at T-10s a $5 lead is enough.
+        t_frac = max(0.0, min(1.0, seconds_left / 60.0))
+        coin_flip_band = (
+            self.COIN_FLIP_BAND_MIN
+            + (self.COIN_FLIP_BAND_MAX - self.COIN_FLIP_BAND_MIN) * t_frac
+        )
+        if abs(distance_pct) < coin_flip_band:
             logger.info(
                 f"SKIP {market.slug}: coin-flip zone - BTC ${price.price:,.2f} "
-                f"vs strike ${strike:,.2f} ({distance_pct*100:+.3f}%)."
+                f"vs strike ${strike:,.2f} ({distance_pct*100:+.3f}%) "
+                f"[band {coin_flip_band*100:.3f}% @ {seconds_left:.0f}s]."
             )
             return None
 

@@ -202,13 +202,21 @@ class TradeTracker:
         open_positions = self.get_open_positions()
         status = risk_manager.get_status()
         capital = risk_manager.current_capital
-        growth = ((capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+        # Use live starting capital (set on first wallet sync) when available,
+        # so the growth % reflects what's actually happened in this session
+        # rather than progress against the hardcoded $150.
+        baseline = (
+            risk_manager._live_starting_capital
+            if risk_manager._live_starting_capital is not None
+            else config.STARTING_CAPITAL
+        )
+        growth = ((capital - baseline) / baseline) * 100 if baseline else 0.0
         next_max = max(config.MAX_BET_SIZE, capital * config.MAX_BET_FRACTION)
 
         print("\n" + "=" * 60)
         print(f"  POLYMARKET BTC BOT - 24/7 COMPOUNDING")
         print("-" * 60)
-        print(f"  Capital:   ${capital:.2f}  ({growth:+.1f}% from ${config.STARTING_CAPITAL:.0f})")
+        print(f"  Capital:   ${capital:.2f}  ({growth:+.1f}% from ${baseline:.2f})")
         print(f"  Peak:      ${risk_manager.peak_capital:.2f}")
         print(f"  Total PnL: {summary['total_pnl']}")
         print(f"  Next Max Trade: ${next_max:.2f}")

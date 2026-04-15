@@ -299,7 +299,11 @@ class TradingBot:
 
             # Log compounding effect
             if won and position.pnl > 0:
-                growth = ((self.risk_manager.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+                baseline = (
+                    self.risk_manager._live_starting_capital
+                    or config.STARTING_CAPITAL
+                )
+                growth = ((self.risk_manager.current_capital - baseline) / baseline) * 100
                 logger.info(
                     f"PROFIT COMPOUNDED: +${position.pnl:.2f} -> "
                     f"Capital now ${self.risk_manager.current_capital:.2f} ({growth:+.1f}% growth)"
@@ -351,7 +355,11 @@ class TradingBot:
         uptime = time.time() - self._start_time
         hours = uptime / 3600
         summary = self.tracker.get_summary()
-        growth = ((self.risk_manager.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+        baseline = (
+            self.risk_manager._live_starting_capital
+            or config.STARTING_CAPITAL
+        )
+        growth = ((self.risk_manager.current_capital - baseline) / baseline) * 100
 
         print(f"\n  SESSION SUMMARY")
         print(f"  {'='*40}")
@@ -359,7 +367,7 @@ class TradingBot:
         print(f"  Total Trades:   {summary['total_trades']}")
         print(f"  Win Rate:       {summary['win_rate']}")
         print(f"  Total PnL:      {summary['total_pnl']}")
-        print(f"  Starting Cap:   ${config.STARTING_CAPITAL:.2f}")
+        print(f"  Starting Cap:   ${baseline:.2f}")
         print(f"  Final Capital:  ${self.risk_manager.current_capital:.2f}")
         print(f"  Growth:         {growth:+.1f}%")
         print(f"  Peak Capital:   ${self.risk_manager.peak_capital:.2f}")
