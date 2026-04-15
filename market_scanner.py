@@ -212,6 +212,14 @@ class MarketScanner:
                 or data.get("negRiskMarketID")
             )
 
+            # The BTC "Up or Down" 5-minute series is always hosted on the
+            # Neg Risk CTF Exchange even when the API response doesn't set
+            # the flag explicitly. Orders for these markets MUST be signed
+            # against that contract, otherwise the server returns
+            # "invalid signature".
+            if self._is_up_or_down_market(question):
+                neg_risk = True
+
             return MarketInfo(
                 slug=data.get("slug", ""),
                 condition_id=data.get("conditionId", data.get("condition_id", "")),

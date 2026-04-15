@@ -56,10 +56,32 @@ class OrderExecutor:
                 for neg-risk markets must be signed against that
                 contract's EIP-712 domain or the server rejects them
                 with "invalid signature".
+
+        If the first attempt is rejected with "invalid signature", we
+        retry ONCE with the opposite neg_risk flag - this self-corrects
+        when Gamma's metadata lies about which exchange hosts the
+        market.
         """
         if self.dry_run:
             return self._simulate_market_order(token_id, amount)
 
+        result = self._try_market_order(token_id, amount, neg_risk)
+        if (
+            not result.success
+            and result.error
+            and "invalid signature" in result.error.lower()
+        ):
+            logger.warning(
+                f"Retrying with neg_risk={not neg_risk} "
+                f"after 'invalid signature'."
+            )
+            result = self._try_market_order(token_id, amount, not neg_risk)
+        return result
+
+    def _try_market_order(
+        self, token_id: str, amount: float, neg_risk: bool
+    ) -> OrderResult:
+        """One attempt at placing a market order. Returns an OrderResult."""
         try:
             logger.info(
                 f"Placing market order: BUY {token_id[:8]}... for "
@@ -97,15 +119,9 @@ class OrderExecutor:
 
         except Exception as e:
             msg = str(e)
-            if "invalid signature" in msg.lower():
-                logger.error(
-                    "Market order rejected with 'invalid signature'. This almost "
-                    "always means POLYMARKET_SIGNATURE_TYPE does not match your "
-                    "wallet's on-chain contract. Try flipping it in .env "
-                    "(email-signup accounts are type 2, older browser accounts "
-                    "are type 1)."
-                )
-            else:
+            # Let the caller decide what to do with "invalid signature"
+            # (place_market_order retries once with flipped neg_risk).
+            if "invalid signature" not in msg.lower():
                 logger.error(f"Market order exception: {e}")
             return OrderResult(success=False, error=msg)
 
