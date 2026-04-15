@@ -47,6 +47,7 @@ class OrderExecutor:
             order_args = MarketOrderArgs(
                 token_id=token_id,
                 amount=amount,
+                side=BUY,
             )
 
             signed_order = self.client.create_market_order(order_args)
