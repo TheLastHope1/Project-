@@ -40,6 +40,36 @@ class RiskManager:
         # Tracks which (market_slug, window_end_ts) pairs we've already bet
         # on, so we never stack multiple bets on the same window.
         self._traded_windows: set[tuple[str, int]] = set()
+        # Starting capital snapshot - set the first time we see a real
+        # wallet balance so growth-% makes sense in live mode.
+        self._live_starting_capital: Optional[float] = None
+
+    def refresh_capital_from_wallet(self, wallet_balance: float) -> None:
+        """
+        Update capital from the live Polymarket USDC balance.
+
+        wallet_balance is what's free in the wallet (excludes collateral
+        locked in open positions). Total capital = wallet + open exposure.
+        A negative value signals the fetch failed - we keep current_capital
+        unchanged in that case.
+        """
+        if wallet_balance < 0:
+            return  # fetch failed, stay with what we have
+
+        total = wallet_balance + self.total_exposure
+
+        # Record the first real balance we see as "starting capital" for
+        # growth-% displays.
+        if self._live_starting_capital is None:
+            self._live_starting_capital = total
+            logger.info(
+                f"Live starting capital: ${total:.2f} "
+                f"(wallet ${wallet_balance:.2f} + exposure ${self.total_exposure:.2f})"
+            )
+
+        self.current_capital = total
+        if total > self.peak_capital:
+            self.peak_capital = total
 
     @staticmethod
     def _window_key(market: MarketInfo) -> tuple[str, int]:
@@ -208,7 +238,8 @@ class RiskManager:
         if self.current_capital > self.peak_capital:
             self.peak_capital = self.current_capital
 
-        growth = ((self.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+        base = self._live_starting_capital or config.STARTING_CAPITAL
+        growth = ((self.current_capital - base) / base) * 100 if base else 0.0
 
         logger.info(
             f"Position closed: PnL ${pnl:+.2f} | "
@@ -220,7 +251,8 @@ class RiskManager:
     def get_status(self) -> dict:
         """Return current state."""
         win_rate = (self.session_wins / self.session_trades * 100) if self.session_trades > 0 else 0
-        growth = ((self.current_capital - config.STARTING_CAPITAL) / config.STARTING_CAPITAL) * 100
+        base = self._live_starting_capital or config.STARTING_CAPITAL
+        growth = ((self.current_capital - base) / base) * 100 if base else 0.0
         available = self.current_capital - self.total_exposure
 
         return {

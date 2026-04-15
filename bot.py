@@ -103,6 +103,11 @@ class TradingBot:
 
     def _run_cycle(self):
         """Execute one full trading cycle."""
+        # Step 0: Sync capital with live wallet balance (live mode only).
+        # Dry run keeps its simulated capital so PnL math stays consistent.
+        if not self.dry_run:
+            self._sync_live_capital()
+
         # Step 1: Resolve any expired positions (collect profits)
         self._resolve_expired_positions()
 
@@ -262,6 +267,21 @@ class TradingBot:
         else:
             logger.warning(f"Trade failed: {order_result.error}")
             return False
+
+    def _sync_live_capital(self):
+        """Pull the live USDC balance from Polymarket and update capital."""
+        balance = self.poly_client.get_usdc_balance()
+        if balance < 0:
+            # Fetch failed - carry on with what we had.
+            return
+        prev = self.risk_manager.current_capital
+        self.risk_manager.refresh_capital_from_wallet(balance)
+        new = self.risk_manager.current_capital
+        if abs(new - prev) > 0.01:
+            logger.info(
+                f"Wallet sync: ${prev:.2f} -> ${new:.2f} "
+                f"(free ${balance:.2f} + exposure ${self.risk_manager.total_exposure:.2f})"
+            )
 
     def _resolve_expired_positions(self):
         """Check and resolve positions whose markets have expired. Profits flow back to capital."""

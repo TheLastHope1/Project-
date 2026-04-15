@@ -10,6 +10,9 @@ import config
 # Signature type 2 = POLY_GNOSIS_SAFE (older browser-wallet proxy).
 SIG_TYPE_POLY_PROXY = 1
 
+# USDC on Polygon has 6 decimals.
+USDC_DECIMALS = 6
+
 logger = logging.getLogger("polymarket_bot.client")
 
 
@@ -140,3 +143,47 @@ class PolymarketClient:
     def get_client(self) -> ClobClient:
         """Return the raw ClobClient instance for direct use."""
         return self.client
+
+    def get_usdc_balance(self) -> float:
+        """
+        Fetch the live USDC (collateral) balance from Polymarket.
+
+        Returns the balance in USDC (not wei). Returns -1.0 on failure so
+        callers can distinguish a failed fetch from a genuine zero balance.
+        """
+        try:
+            # Import lazily so the module still loads if py-clob-client is
+            # missing these types (older versions).
+            from py_clob_client.clob_types import (
+                BalanceAllowanceParams,
+                AssetType,
+            )
+
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                signature_type=(
+                    SIG_TYPE_POLY_PROXY
+                    if config.POLYMARKET_FUNDER_ADDRESS
+                    else 0
+                ),
+            )
+            resp = self.client.get_balance_allowance(params)
+            if not resp:
+                return -1.0
+
+            raw = resp.get("balance", "0") if isinstance(resp, dict) else "0"
+            try:
+                wei = int(raw)
+            except (TypeError, ValueError):
+                return -1.0
+            return wei / (10 ** USDC_DECIMALS)
+
+        except ImportError:
+            logger.warning(
+                "BalanceAllowanceParams not available in this py-clob-client "
+                "version; cannot fetch live balance."
+            )
+            return -1.0
+        except Exception as e:
+            logger.warning(f"Failed to fetch USDC balance: {e}")
+            return -1.0
