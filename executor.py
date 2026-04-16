@@ -102,6 +102,42 @@ class OrderExecutor:
                 )
             else:
                 signed_order = self.client.create_market_order(order_args)
+
+            # Diagnostic dump: what did the client actually sign? The
+            # "invalid signature" rejections usually mean either (a) the
+            # verifyingContract baked into the EIP-712 domain doesn't match
+            # what Polymarket's backend expects (stale py-clob-client), or
+            # (b) the signer address is not the one the proxy funder is
+            # registered to. Logging both makes the root cause visible
+            # instead of guessing.
+            try:
+                raw = {}
+                try:
+                    raw = vars(signed_order)
+                except TypeError:
+                    pass
+                logger.info(
+                    "Signed order preview: maker=%s signer=%s taker=%s "
+                    "verifyingContract=%s signatureType=%s salt=%s",
+                    getattr(signed_order, "maker", raw.get("maker")),
+                    getattr(signed_order, "signer", raw.get("signer")),
+                    getattr(signed_order, "taker", raw.get("taker")),
+                    (
+                        getattr(signed_order, "verifyingContract", None)
+                        or raw.get("verifyingContract")
+                        or raw.get("verifying_contract")
+                    ),
+                    (
+                        getattr(signed_order, "signatureType", None)
+                        or getattr(signed_order, "signature_type", None)
+                        or raw.get("signatureType")
+                        or raw.get("signature_type")
+                    ),
+                    getattr(signed_order, "salt", raw.get("salt")),
+                )
+            except Exception as diag_err:
+                logger.debug(f"Signed-order diagnostic failed: {diag_err}")
+
             result = self.client.post_order(signed_order, OrderType.FOK)
 
             if result and result.get("success"):
