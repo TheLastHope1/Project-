@@ -243,36 +243,57 @@ class MarketScanner:
         return "up or down" in q or "updown" in q
 
     def _get_window_open_price(self, window_start_ts: int) -> float:
-        """Fetch BTC opening price at the given window start from Binance.
+        """Fetch BTC opening price at the given window start.
 
-        For 'Bitcoin Up or Down' markets, the implicit strike is the BTC
-        price at the moment the 5-minute window opened. Binance 1-min
-        klines give us this via the `open` field of the candle starting
-        at window_start_ts. Cached per window.
+        Tries Coinbase first (US-friendly), falls back to Binance.
+        Cached per window.
         """
         cache_key = f"open_price:{window_start_ts}"
         cached = self._get_cached(cache_key)
         if cached is not None:
             return cached
 
-        url = f"{config.BINANCE_API_URL}/api/v3/klines"
-        params = {
-            "symbol": "BTCUSDT",
-            "interval": "1m",
-            "startTime": window_start_ts * 1000,  # ms
-            "limit": 1,
-        }
+        price = self._fetch_open_price_coinbase(window_start_ts)
+        if price <= 0:
+            price = self._fetch_open_price_binance(window_start_ts)
+        if price > 0:
+            self._set_cached(cache_key, price)
+        return price
 
+    def _fetch_open_price_coinbase(self, window_start_ts: int) -> float:
+        """Coinbase Exchange 1-min candles. Returns open price or 0.0."""
+        url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        params = {
+            "granularity": 60,
+            "start": window_start_ts,
+            "end": window_start_ts + 60,
+        }
         try:
             resp = requests.get(url, params=params, timeout=5)
             resp.raise_for_status()
             data = resp.json()
-            # Kline format: [open_time, open, high, low, close, volume, ...]
+            # Format: [[ts, low, high, open, close, volume], ...]
+            if data and len(data) > 0 and len(data[0]) > 3:
+                return float(data[0][3])
+        except Exception as e:
+            logger.debug(f"Coinbase open price fetch failed: {e}")
+        return 0.0
+
+    def _fetch_open_price_binance(self, window_start_ts: int) -> float:
+        """Binance klines fallback."""
+        url = f"{config.BINANCE_API_URL}/api/v3/klines"
+        params = {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "startTime": window_start_ts * 1000,
+            "limit": 1,
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
             if data and len(data) > 0 and len(data[0]) > 1:
-                open_price = float(data[0][1])
-                # Cache for the duration of the window (5 min is fine).
-                self._set_cached(cache_key, open_price)
-                return open_price
+                return float(data[0][1])
         except Exception as e:
             logger.warning(
                 f"Failed to fetch BTC window open price for ts={window_start_ts}: {e}"

@@ -35,118 +35,160 @@ class MomentumData:
     """Computed momentum indicators."""
     ema_fast: float
     ema_slow: float
-    crossover: str  # "bullish", "bearish", "neutral"
-    price_vs_ema: float  # % distance from fast EMA
-    volatility: float  # std dev of recent returns
-    trend_strength: float  # abs(fast - slow) / slow
-    rsi: float  # 14-period RSI
-    momentum_5m: float  # 5-min price change %
-    momentum_15m: float  # 15-min price change %
+    crossover: str
+    price_vs_ema: float
+    volatility: float
+    trend_strength: float
+    rsi: float
+    momentum_5m: float
+    momentum_15m: float
+
+
+# Primary = Coinbase (geo-available in US). Secondary = Binance (fallback
+# for regions where Coinbase is slow/blocked). Having two sources means
+# one being down doesn't kill the bot.
+COINBASE_TICKER_URL = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
+COINBASE_CANDLES_URL = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/bookTicker"
+BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
 class BinancePriceFeed:
-    """Real-time BTC price data from Binance public API."""
+    """BTC price feed. Tries Coinbase first, falls back to Binance.
 
-    SYMBOL = "BTCUSDT"
+    Name kept for backwards compatibility with existing imports.
+    """
 
     def __init__(self):
         self._last_price = None
         self._last_candles = None
         self._candle_cache_time = 0
 
+    # ── Current price ─────────────────────────────────────────────
     def get_current_price(self) -> Optional[PriceSnapshot]:
-        """Fetch current BTC/USDT bid/ask from Binance."""
-        url = f"{config.BINANCE_API_URL}/api/v3/ticker/bookTicker"
-        params = {"symbol": self.SYMBOL}
-
-        for attempt in range(3):
-            try:
-                resp = requests.get(url, params=params, timeout=5)
-                resp.raise_for_status()
-                data = resp.json()
-
-                bid = float(data["bidPrice"])
-                ask = float(data["askPrice"])
-                mid = (bid + ask) / 2
-
-                snapshot = PriceSnapshot(
-                    price=mid,
-                    bid=bid,
-                    ask=ask,
-                    timestamp=time.time(),
-                )
-                self._last_price = snapshot
-                return snapshot
-
-            except Exception as e:
-                logger.warning(f"Price fetch attempt {attempt + 1} failed: {e}")
-                if attempt < 2:
-                    time.sleep(1)
-
-        # Return cached price if available
+        snapshot = self._fetch_price_coinbase() or self._fetch_price_binance()
+        if snapshot:
+            self._last_price = snapshot
+            return snapshot
         if self._last_price:
             logger.warning("Using cached price data.")
             return self._last_price
         return None
 
+    def _fetch_price_coinbase(self) -> Optional[PriceSnapshot]:
+        try:
+            resp = requests.get(COINBASE_TICKER_URL, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            bid = float(data["bid"])
+            ask = float(data["ask"])
+            return PriceSnapshot(
+                price=(bid + ask) / 2,
+                bid=bid,
+                ask=ask,
+                timestamp=time.time(),
+            )
+        except Exception as e:
+            logger.debug(f"Coinbase ticker fetch failed: {e}")
+            return None
+
+    def _fetch_price_binance(self) -> Optional[PriceSnapshot]:
+        try:
+            resp = requests.get(
+                BINANCE_TICKER_URL, params={"symbol": "BTCUSDT"}, timeout=5
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            bid = float(data["bidPrice"])
+            ask = float(data["askPrice"])
+            return PriceSnapshot(
+                price=(bid + ask) / 2,
+                bid=bid,
+                ask=ask,
+                timestamp=time.time(),
+            )
+        except Exception as e:
+            logger.debug(f"Binance ticker fetch failed: {e}")
+            return None
+
+    # ── Recent candles ────────────────────────────────────────────
     def get_recent_candles(self, interval: str = "1m",
                            limit: int = 30) -> list[CandleData]:
-        """Fetch recent 1-minute candles from Binance."""
-        # Use cache if fresh (< 10 seconds old)
+        """Fetch recent 1-minute candles. Coinbase first, Binance fallback."""
         if self._last_candles and (time.time() - self._candle_cache_time < 10):
             return self._last_candles
 
-        url = f"{config.BINANCE_API_URL}/api/v3/klines"
-        params = {
-            "symbol": self.SYMBOL,
-            "interval": interval,
-            "limit": limit,
-        }
-
-        for attempt in range(3):
-            try:
-                resp = requests.get(url, params=params, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-
-                candles = []
-                for k in data:
-                    candles.append(CandleData(
-                        open=float(k[1]),
-                        high=float(k[2]),
-                        low=float(k[3]),
-                        close=float(k[4]),
-                        volume=float(k[5]),
-                        timestamp=float(k[0]) / 1000,  # ms to seconds
-                    ))
-
-                self._last_candles = candles
-                self._candle_cache_time = time.time()
-                return candles
-
-            except Exception as e:
-                logger.warning(f"Candle fetch attempt {attempt + 1} failed: {e}")
-                if attempt < 2:
-                    time.sleep(1)
+        candles = (
+            self._fetch_candles_coinbase(limit)
+            or self._fetch_candles_binance(interval, limit)
+        )
+        if candles:
+            self._last_candles = candles
+            self._candle_cache_time = time.time()
+            return candles
 
         return self._last_candles or []
 
+    def _fetch_candles_coinbase(self, limit: int) -> Optional[list[CandleData]]:
+        try:
+            # Coinbase returns up to 300 candles. granularity=60 = 1-minute.
+            params = {"granularity": 60}
+            resp = requests.get(COINBASE_CANDLES_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            raw = resp.json()
+            # Coinbase format: [[ts, low, high, open, close, volume], ...]
+            # Sorted descending (newest first). We want ascending.
+            raw.sort(key=lambda x: x[0])
+            raw = raw[-limit:]
+            return [
+                CandleData(
+                    open=float(k[3]),
+                    high=float(k[2]),
+                    low=float(k[1]),
+                    close=float(k[4]),
+                    volume=float(k[5]),
+                    timestamp=float(k[0]),
+                )
+                for k in raw
+            ]
+        except Exception as e:
+            logger.debug(f"Coinbase candles fetch failed: {e}")
+            return None
+
+    def _fetch_candles_binance(self, interval: str, limit: int) -> Optional[list[CandleData]]:
+        try:
+            params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
+            resp = requests.get(BINANCE_KLINES_URL, params=params, timeout=5)
+            resp.raise_for_status()
+            raw = resp.json()
+            return [
+                CandleData(
+                    open=float(k[1]),
+                    high=float(k[2]),
+                    low=float(k[3]),
+                    close=float(k[4]),
+                    volume=float(k[5]),
+                    timestamp=float(k[0]) / 1000,
+                )
+                for k in raw
+            ]
+        except Exception as e:
+            logger.debug(f"Binance klines fetch failed: {e}")
+            return None
+
+    # ── Momentum computation ──────────────────────────────────────
     def compute_momentum(self, candles: list[CandleData]) -> Optional[MomentumData]:
-        """Calculate momentum indicators from candle data."""
         if len(candles) < config.EMA_SLOW_PERIOD + 1:
             logger.warning(f"Not enough candles ({len(candles)}) for momentum calc.")
             return None
 
         closes = np.array([c.close for c in candles])
-
-        # EMAs
         ema_fast = self._compute_ema(closes, config.EMA_FAST_PERIOD)
         ema_slow = self._compute_ema(closes, config.EMA_SLOW_PERIOD)
 
         current_fast = ema_fast[-1]
         current_slow = ema_slow[-1]
 
-        # Crossover detection
         if len(ema_fast) >= 2 and len(ema_slow) >= 2:
             prev_diff = ema_fast[-2] - ema_slow[-2]
             curr_diff = current_fast - current_slow
@@ -159,21 +201,12 @@ class BinancePriceFeed:
         else:
             crossover = "neutral"
 
-        # Price vs EMA
         current_price = closes[-1]
         price_vs_ema = (current_price - current_fast) / current_fast
-
-        # Volatility (std dev of 1-minute returns)
         returns = np.diff(closes) / closes[:-1]
         volatility = float(np.std(returns)) if len(returns) > 1 else 0.0
-
-        # Trend strength
         trend_strength = abs(current_fast - current_slow) / current_slow
-
-        # RSI (14-period)
         rsi = self._compute_rsi(closes, 14)
-
-        # Momentum (price change over N candles)
         momentum_5m = (closes[-1] - closes[-6]) / closes[-6] if len(closes) >= 6 else 0.0
         momentum_15m = (closes[-1] - closes[-16]) / closes[-16] if len(closes) >= 16 else 0.0
 
@@ -190,7 +223,6 @@ class BinancePriceFeed:
         )
 
     def _compute_ema(self, data: np.ndarray, period: int) -> np.ndarray:
-        """Compute Exponential Moving Average."""
         alpha = 2.0 / (period + 1)
         ema = np.zeros_like(data)
         ema[0] = data[0]
@@ -199,17 +231,13 @@ class BinancePriceFeed:
         return ema
 
     def _compute_rsi(self, closes: np.ndarray, period: int = 14) -> float:
-        """Compute RSI (Relative Strength Index)."""
         if len(closes) < period + 1:
-            return 50.0  # neutral default
-
+            return 50.0
         deltas = np.diff(closes)
         gains = np.where(deltas > 0, deltas, 0.0)
         losses = np.where(deltas < 0, -deltas, 0.0)
-
         avg_gain = np.mean(gains[-period:])
         avg_loss = np.mean(losses[-period:])
-
         if avg_loss == 0:
             return 100.0
         rs = avg_gain / avg_loss
