@@ -35,11 +35,21 @@ if [ ! -f ".deps_installed" ] || [ "requirements.txt" -nt ".deps_installed" ]; t
 fi
 
 # ---- .env sanity check ----
+# Trigger the wizard if .env is missing OR exists but has no PRIVATE_KEY
+# set (empty placeholder file).
+needs_setup=0
 if [ ! -f ".env" ]; then
-  echo "==> No .env found — launching interactive setup wizard..."
+  needs_setup=1
+elif ! grep -Eq '^PRIVATE_KEY=.+' .env; then
+  echo "==> .env exists but PRIVATE_KEY is not set."
+  needs_setup=1
+fi
+
+if [ "$needs_setup" = "1" ]; then
+  echo "==> Launching interactive setup wizard..."
   echo ""
   python setup.py
-  if [ ! -f ".env" ]; then
+  if [ ! -f ".env" ] || ! grep -Eq '^PRIVATE_KEY=.+' .env; then
     echo "!! Setup did not complete. Run ./start.sh again when ready."
     exit 1
   fi
