@@ -36,8 +36,13 @@ fi
 
 # ---- .env sanity check ----
 if [ ! -f ".env" ]; then
-  echo "!! .env is missing. Copy .env.example to .env and fill in credentials."
-  exit 1
+  echo "==> No .env found — launching interactive setup wizard..."
+  echo ""
+  python setup.py
+  if [ ! -f ".env" ]; then
+    echo "!! Setup did not complete. Run ./start.sh again when ready."
+    exit 1
+  fi
 fi
 
 # ---- launch ----
