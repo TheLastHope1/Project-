@@ -1,8 +1,7 @@
 """Interactive setup for the Polymarket BTC bot.
 
-Walks the user through creating a valid .env file and prints the
-derived EOA address so they can verify it matches Polymarket's
-"Signer Address" before going live.
+Walks the user through creating a valid .env file. Only asks for
+PRIVATE_KEY and FUNDER_ADDRESS — the bot auto-detects signature type.
 
 Run via ./start.sh (auto-invoked when .env is missing) or directly:
 
@@ -14,15 +13,12 @@ import os
 import sys
 from pathlib import Path
 
-# eth_account is a transitive dep of py-clob-client; available after
-# requirements install.
 from eth_account import Account
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 
 
 def ask(prompt: str, default: str = "", secret: bool = False) -> str:
-    """Prompt the user for a value. Shows [default] if provided."""
     label = f"{prompt}"
     if default:
         label += f" [{default}]"
@@ -45,151 +41,115 @@ def ask_yes_no(prompt: str, default: bool = True) -> bool:
 
 def header(text: str) -> None:
     print()
-    print("━" * 64)
-    print(text)
-    print("━" * 64)
+    print("=" * 60)
+    print(f"  {text}")
+    print("=" * 60)
 
 
 def main() -> int:
-    header("Polymarket BTC Bot — Interactive Setup")
+    header("Polymarket BTC Bot -- Setup")
     print("""
-This wizard creates your .env file. You'll need:
+  This creates your .env file. You need TWO things:
 
-  1. Your Polymarket wallet's PRIVATE KEY
-  2. Your Polymarket FUNDER ADDRESS (deposit address)
-  3. How you signed up (MetaMask vs email)
+    1. Your wallet PRIVATE KEY
+    2. Your wallet DEPOSIT ADDRESS (funder)
 
-Press Ctrl+C at any time to abort.
+  The bot auto-detects everything else.
+  Press Ctrl+C at any time to abort.
 """)
 
     if ENV_PATH.exists():
         if not ask_yes_no(
-            f".env already exists at {ENV_PATH}. Overwrite?",
-            default=False,
+            f"  .env already exists. Overwrite?", default=False,
         ):
-            print("Aborted. No changes made.")
+            print("  Aborted.")
             return 1
 
-    # ── Signup method ───────────────────────────────────────────────
-    header("Step 1 — How did you sign up to Polymarket?")
-    print("""
-  [1] MetaMask or external wallet (connected via WalletConnect)
-  [2] Email / Google / social signup (Polymarket embedded wallet)
-""")
-    while True:
-        choice = ask("Choose 1 or 2", default="2")
-        if choice in ("1", "2"):
-            break
-        print("  ↳ enter 1 or 2")
-
-    sig_type = 1 if choice == "1" else 2
-    sig_name = "POLY_PROXY" if sig_type == 1 else "POLY_GNOSIS_SAFE"
-    print(f"  ↳ signature_type={sig_type} ({sig_name})")
-
     # ── Private key ─────────────────────────────────────────────────
-    header("Step 2 — Paste your Polymarket wallet PRIVATE KEY")
+    header("Step 1: Private Key")
     print("""
-Where to find it:
+  Where to find it:
 
-  MetaMask:  click account icon → Account Details → Export Private Key
-             → enter your MetaMask password → copy the hex string
+    polymarket.com -> Profile icon -> Settings
+    -> scroll to "Export Private Key" -> enter password -> copy it
 
-  Email:     polymarket.com → Profile icon → Settings
-             → scroll to "Export Private Key" → enter password → copy it
+    OR if MetaMask: click account -> Account Details -> Export Private Key
 
-The key is a 64-character hex string (may start with 0x). It will NOT
-be displayed as you type.
+  The key is a long hex string. It will NOT show as you type.
 """)
     while True:
-        pk = ask("PRIVATE_KEY", secret=True)
+        pk = ask("  Paste your PRIVATE_KEY", secret=True)
         if not pk:
-            print("  ↳ required, try again")
+            print("    Required, try again.")
             continue
-        # Normalize: strip 0x prefix for consistency; py-clob-client
-        # accepts both but signing libs prefer with-prefix.
         if not pk.startswith("0x"):
             pk = "0x" + pk
         try:
             signer_eoa = Account.from_key(pk).address
         except Exception as e:
-            print(f"  ↳ that key is invalid ({e}). Try again.")
+            print(f"    Invalid key ({e}). Try again.")
             continue
         break
 
-    print(f"\n  ↳ Derived signer address: {signer_eoa}")
+    print(f"\n    Your signer address: {signer_eoa}")
 
     # ── Funder address ──────────────────────────────────────────────
-    header("Step 3 — Your Polymarket FUNDER ADDRESS")
+    header("Step 2: Deposit Address (Funder)")
     print("""
-This is the address that holds your USDC on Polymarket (NOT the same
-as your signer address above, unless you use a raw wallet).
+  Where to find it:
 
-Where to find it:
+    polymarket.com -> click your Profile icon (top right)
+    -> click "Deposit" -> copy the 0x address shown
 
-  polymarket.com → Profile icon (top right) → "Deposit" or "Wallet"
-  → copy the address that starts with 0x.
-
-Or: polymarket.com → Settings → look for "Funder" / "Deposit Address".
+  It starts with 0x and is 42 characters long.
 """)
     while True:
-        funder = ask("POLYMARKET_FUNDER_ADDRESS")
+        funder = ask("  Paste your DEPOSIT ADDRESS")
         if not funder:
-            print("  ↳ required, try again")
+            print("    Required, try again.")
             continue
         funder = funder.strip()
         if not funder.startswith("0x") or len(funder) != 42:
-            print("  ↳ should be a 42-char address starting with 0x. Try again.")
+            print("    Must be 42 characters starting with 0x. Try again.")
             continue
         break
 
-    # Sanity-check: signer MUST differ from funder for proxy wallets
-    if funder.lower() == signer_eoa.lower():
-        print("""
-  ⚠️  WARNING: your signer address equals your funder address.
-
-  For email/MetaMask proxy wallets this is almost certainly wrong —
-  the funder is a proxy contract, and its signer is your private key's
-  derived EOA, which should be a DIFFERENT address.
-
-  If you copy/pasted the wrong value for one of them, go back and fix
-  it now. Otherwise continue at your own risk.
-""")
-        if not ask_yes_no("Continue anyway?", default=False):
-            return 1
-
-    # ── Dry run mode ────────────────────────────────────────────────
-    header("Step 4 — Trading mode")
+    # ── Trading mode ────────────────────────────────────────────────
+    header("Step 3: Trading Mode")
     print("""
-  [live]    Place REAL orders with REAL money
-  [dry]     Paper-trade — simulate orders, never spend USDC
+    1 = LIVE  (real money)
+    2 = DRY   (paper trading, no real money)
 """)
-    mode = ask("Mode (live/dry)", default="live").lower()
-    dry_run = "true" if mode.startswith("d") else "false"
+    while True:
+        mode = ask("  Choose 1 or 2", default="1")
+        if mode in ("1", "2"):
+            break
+        print("    Enter 1 or 2.")
+    dry_run = "true" if mode == "2" else "false"
 
     # ── Write .env ──────────────────────────────────────────────────
-    header("Writing .env")
-    env_contents = f"""# Generated by setup.py. Edit this file manually to change values.
+    header("Saving .env")
 
-# ── Polymarket credentials ─────────────────────────────────────────
+    env_contents = f"""# Generated by setup.py
+
+# Polymarket credentials (leave API fields blank -- bot auto-derives them)
 POLYMARKET_API_KEY=
 POLYMARKET_API_SECRET=
 POLYMARKET_API_PASSPHRASE=
 
-# Your wallet's private key (signer of orders).
+# Your wallet private key
 PRIVATE_KEY={pk}
 
-# Your Polymarket funder / deposit address (holds USDC).
+# Your deposit/funder address
 POLYMARKET_FUNDER_ADDRESS={funder}
 
-# Signature type:
-#   1 = POLY_PROXY       (MetaMask / external wallet)
-#   2 = POLY_GNOSIS_SAFE (email / Google / social signup)
-POLYMARKET_SIGNATURE_TYPE={sig_type}
+# Signature type -- bot auto-detects, but 1=POLY_PROXY 2=GNOSIS_SAFE
+POLYMARKET_SIGNATURE_TYPE=1
 
-# ── Bot behavior ──────────────────────────────────────────────────
+# Trading mode
 DRY_RUN={dry_run}
 
-# ── Dashboard ─────────────────────────────────────────────────────
+# Dashboard
 DASHBOARD_ENABLED=true
 DASHBOARD_PORT=8787
 """
@@ -199,27 +159,15 @@ DASHBOARD_PORT=8787
     except Exception:
         pass
 
-    print(f"  ↳ wrote {ENV_PATH}")
-    print(f"  ↳ chmod 600 applied")
-
-    # ── Final verification step ─────────────────────────────────────
-    header("FINAL CHECK — verify the signer before you trade")
-    print(f"""
-Your SIGNER ADDRESS is:
-
-    {signer_eoa}
-
-Go to polymarket.com → Profile → Settings and find the field labeled
-"Signer Address" (or "API Key" / "API Signer Address"). It MUST
-match the address above exactly.
-
-If it does NOT match, your orders will be rejected with
-"invalid signature" and no trading will happen. In that case,
-re-export the correct private key and run ./start.sh again.
-
-Ready to launch? The bot will start in a moment.
-""")
-    input("Press ENTER to continue (or Ctrl+C to exit)...")
+    print(f"  Saved to {ENV_PATH}")
+    print()
+    print(f"  Your signer: {signer_eoa}")
+    print(f"  Your funder:  {funder}")
+    print(f"  Mode:         {'LIVE' if dry_run == 'false' else 'DRY RUN'}")
+    print()
+    print("  The bot will auto-detect your wallet type on startup.")
+    print()
+    input("  Press ENTER to launch the bot...")
     return 0
 
 
@@ -227,5 +175,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print("\nAborted.")
+        print("\n  Aborted.")
         sys.exit(1)
