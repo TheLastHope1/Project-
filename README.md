@@ -39,24 +39,43 @@ which is exactly the FaZe/eyeballers pattern).
 ## Install
 
 ```bash
+git clone -b claude/poly-market-scanner-R3RKz https://github.com/TheLastHope1/Project-.git
+cd Project-
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Run
+## Configure
 
-Continuous scan, alert to console:
+Copy the example env file and edit to taste:
+
+```bash
+cp scanner.env.example scanner.env
+```
+
+`scanner.env` supports:
+
+| key                 | meaning                                              |
+| ------------------- | ---------------------------------------------------- |
+| `POLY_DESKTOP`      | `1` = macOS banner notifications on every alert      |
+| `POLY_WEBHOOK_URL`  | Discord/Slack incoming-webhook URL (optional)        |
+| `POLY_WATCHLIST`    | comma-separated team/entity substrings               |
+| `POLY_MAX_PRICE`    | max underdog price to alert (default `0.40`)         |
+| `POLY_MIN_LIQUIDITY`| minimum USDC liquidity (default `500`)               |
+| `POLY_INTERVAL`     | seconds between scans (default `120`)                |
+
+Values with spaces must be inside the outer quotes, e.g.
+`POLY_WATCHLIST="FaZe,G2 Esports,NAVI"`.
+
+## Run interactively
 
 ```bash
 python -m polymarket_scanner
 ```
 
-One-shot scan (for cron):
-
-```bash
-python -m polymarket_scanner --once
-```
-
-Tighter threshold, custom watchlist:
+CLI flags (override `scanner.env`):
 
 ```bash
 python -m polymarket_scanner \
@@ -65,24 +84,47 @@ python -m polymarket_scanner \
   --watchlist FaZe "G2 Esports" NAVI
 ```
 
-Alerts go to stdout by default. Additional sinks activate via env vars:
+One-shot for cron:
 
 ```bash
-export POLY_WEBHOOK_URL="https://discord.com/api/webhooks/..."  # or Slack
-export POLY_DESKTOP=1                                           # OS notifications
-python -m polymarket_scanner
+python -m polymarket_scanner --once
 ```
+
+## Run 24/7 in the background (macOS)
+
+Install a launchd user agent so the scanner starts at login, restarts on
+crash, and writes logs to `logs/scanner.log`:
+
+```bash
+./scripts/install-launchd.sh
+```
+
+Managing the agent:
+
+```bash
+./scripts/logs.sh                # tail the log live (Ctrl+C to stop tailing)
+launchctl list | grep polymarket # check status
+./scripts/uninstall-launchd.sh   # stop and remove
+```
+
+Config changes (`scanner.env` edits) take effect after re-running
+`install-launchd.sh`, which reloads the agent with the new values.
 
 ## Layout
 
 ```
 polymarket_scanner/
-  client.py     # Gamma API client + Market dataclass
-  scanner.py    # evaluate_market, scan_once, run_forever, ScanConfig
-  notifier.py   # console / desktop / webhook sinks
-  __main__.py   # CLI entry point
+  client.py          # Gamma API client + Market dataclass
+  scanner.py         # evaluate_market, scan_once, run_forever, ScanConfig
+  notifier.py        # console / desktop / webhook sinks
+  __main__.py        # CLI entry point + scanner.env loader
+scripts/
+  install-launchd.sh
+  uninstall-launchd.sh
+  logs.sh
 tests/
   test_scanner.py
+scanner.env.example  # copy to scanner.env and edit
 ```
 
 ## Tests
