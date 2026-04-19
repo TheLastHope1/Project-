@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -193,19 +194,30 @@ def run_forever(
     cfg: ScanConfig,
     on_opportunity: Callable[[Opportunity], None],
     max_iterations: int | None = None,
+    stop_event: threading.Event | None = None,
+    on_scan_complete: Callable[[list[Opportunity]], None] | None = None,
 ) -> None:
-    """Poll continuously. `on_opportunity` is called once per new alert."""
+    """Poll continuously.
+
+    `on_opportunity` fires once per new alert (deduped by market id + cooldown).
+    `on_scan_complete` fires once per full scan with the complete current list
+    (used by the web app to replace the dashboard state atomically).
+    `stop_event` lets external callers (e.g. the web app) request a clean exit.
+    """
     seen: dict[str, datetime] = {}
-    # Re-alert on the same market after this cooldown (prices move).
     cooldown = timedelta(minutes=30)
 
     i = 0
     while max_iterations is None or i < max_iterations:
+        if stop_event is not None and stop_event.is_set():
+            return
         i += 1
         start = time.monotonic()
         try:
             opps = scan_once(client, cfg)
             log.info("scan #%d: found %d opportunities", i, len(opps))
+            if on_scan_complete is not None:
+                on_scan_complete(opps)
             now = datetime.now(timezone.utc)
             for opp in opps:
                 last = seen.get(opp.market.id)
@@ -218,4 +230,9 @@ def run_forever(
 
         elapsed = time.monotonic() - start
         sleep_for = max(5.0, cfg.scan_interval.total_seconds() - elapsed)
-        time.sleep(sleep_for)
+        # Wait in a way that responds quickly to stop_event.
+        if stop_event is not None:
+            if stop_event.wait(sleep_for):
+                return
+        else:
+            time.sleep(sleep_for)

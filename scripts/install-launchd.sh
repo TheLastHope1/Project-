@@ -80,7 +80,7 @@ cat > "$PLIST_PATH" <<EOF
     <array>
         <string>${PYTHON_BIN}</string>
         <string>-m</string>
-        <string>polymarket_scanner</string>
+        <string>polymarket_scanner.web</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -115,8 +115,15 @@ launchctl unload "$PLIST_PATH" 2>/dev/null || true
 launchctl load "$PLIST_PATH"
 
 echo "Installed launchd agent: $PLIST_PATH"
-echo "Scanner is running in the background."
+echo "Scanner + web UI are running in the background."
 echo
+# Best-effort pull of the auth token for the summary.
+sleep 1
+TOKEN=""
+if [[ -f "$PROJECT_DIR/.scanner_token" ]]; then
+    TOKEN="$(cat "$PROJECT_DIR/.scanner_token")"
+fi
+echo "  Dashboard: http://127.0.0.1:8787/${TOKEN:+?token=$TOKEN}"
 echo "  Status:    launchctl list | grep $LABEL"
 echo "  Logs:      tail -f $LOG_DIR/scanner.log"
 echo "  Errors:    tail -f $LOG_DIR/scanner.err"

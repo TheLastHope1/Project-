@@ -90,16 +90,44 @@ One-shot for cron:
 python -m polymarket_scanner --once
 ```
 
+## Web UI
+
+A browser dashboard lets you view opportunities and signals live, edit
+config, start / stop the scanner, and tail logs — all from your phone or
+laptop browser.
+
+```bash
+python -m polymarket_scanner.web
+```
+
+Prints a URL like `http://127.0.0.1:8787/?token=...` — open it once and the
+token is saved in your browser's localStorage. Binds to `127.0.0.1` by
+default (local only). For LAN access use `--host 0.0.0.0`; for remote access
+use a Tailscale tailnet or an SSH tunnel.
+
+UI tabs:
+- **Opportunities** — live forfeit-edge table, sorted by edge %
+- **Signals** — price anomalies and stale-open markets (news-as-price-move)
+- **Config** — edit every `scanner.env` key. Saving restarts the scanner thread
+  with the new values.
+- **Logs** — tail the scanner log stream in-browser
+
+Auth token rules:
+- First run generates one and writes it to `./.scanner_token` (chmod 600).
+- Override with `POLY_AUTH_TOKEN=...` in `scanner.env`.
+- Magic URL (`?token=...`) works once; the UI stashes the token in
+  localStorage and strips the query string.
+
 ## Run 24/7 in the background (macOS)
 
-Install a launchd user agent so the scanner starts at login, restarts on
-crash, and writes logs to `logs/scanner.log`:
+Install a launchd user agent so the web UI + scanner start at login, restart
+on crash, and write logs to `logs/scanner.log`:
 
 ```bash
 ./scripts/install-launchd.sh
 ```
 
-Managing the agent:
+After install, open the dashboard URL the script prints. Managing the agent:
 
 ```bash
 ./scripts/logs.sh                # tail the log live (Ctrl+C to stop tailing)
@@ -107,8 +135,9 @@ launchctl list | grep polymarket # check status
 ./scripts/uninstall-launchd.sh   # stop and remove
 ```
 
-Config changes (`scanner.env` edits) take effect after re-running
-`install-launchd.sh`, which reloads the agent with the new values.
+Config edits in the web UI take effect immediately (scanner thread restarts
+itself). If you edit `scanner.env` by hand, re-run `install-launchd.sh` so
+the new env vars are baked into the plist.
 
 ## Layout
 
@@ -116,10 +145,19 @@ Config changes (`scanner.env` edits) take effect after re-running
 polymarket_scanner/
   client.py          # Gamma API client + Market dataclass
   scanner.py         # evaluate_market, scan_once, run_forever, ScanConfig
+  signals.py         # price-anomaly + stale-open signal watchers
   notifier.py        # console / desktop / webhook sinks
+  state.py           # AppState (thread-safe shared state for the web UI)
   __main__.py        # CLI entry point + scanner.env loader
+  web/
+    app.py           # FastAPI app, /api/*
+    auth.py          # token auth
+    runner.py        # starts/stops the scanner thread from the UI
+    config_file.py   # read/write scanner.env from the UI
+    static/index.html  # single-file frontend (vanilla JS)
+    __main__.py      # uvicorn entrypoint: python -m polymarket_scanner.web
 scripts/
-  install-launchd.sh
+  install-launchd.sh  # installs the web UI + scanner as a macOS LaunchAgent
   uninstall-launchd.sh
   logs.sh
 tests/
