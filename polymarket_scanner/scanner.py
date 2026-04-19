@@ -20,6 +20,7 @@ the signal-2 heuristics cuts the noise to actionable alerts.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,14 @@ from typing import Callable, Iterable
 from .client import Market, PolymarketClient
 
 log = logging.getLogger(__name__)
+
+# Head-to-head match pattern: "A vs B", "A v. B", "Will X beat/defeat Y".
+# Forfeit-edge only applies to H2H match markets, not outright "will X win
+# the whole season" markets.
+_H2H_RE = re.compile(
+    r"\b(?:vs\.?|v\.)\b|\bbeat\b|\bdefeat\b|\bwin(?:s)?\s+(?:against|over)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -91,37 +100,52 @@ class Opportunity:
 def _classify(market: Market, cfg: ScanConfig, now: datetime) -> list[str]:
     """Return the list of reasons this market is forfeit-prone, or [] if none.
 
-    A market must match a forfeit-prone category OR the team watchlist to
-    qualify at all - timing signals (imminent / past-end) are only appended
-    on top of a domain match, so politics markets with a cheap underdog
-    don't get flagged.
+    An alert requires ALL of:
+      1. Head-to-head structure (question looks like "A vs B") OR a watchlist
+         match. Outright "will X win the season" markets don't forfeit.
+      2. A forfeit-prone domain tag (esports / combat-sport keyword) via
+         word-boundary match so "mma" doesn't match "Emma" or "Commanders".
+      3. A timing signal: event is imminent or already past its end while the
+         market is still open. Without this, year-out markets flood the feed.
     """
     haystack = " ".join(
         s.lower() for s in (market.question, market.category or "", market.event_title or "") if s
     )
+    question_lc = (market.question or "").lower()
+
+    is_h2h = bool(_H2H_RE.search(market.question or ""))
+    watchlist_hits = [t for t in cfg.team_watchlist if t.lower() in question_lc]
+    if not is_h2h and not watchlist_hits:
+        return []
 
     domain_reasons: list[str] = []
     for kw in cfg.forfeit_prone_keywords:
-        if kw in haystack:
+        if re.search(rf"\b{re.escape(kw)}\b", haystack):
             domain_reasons.append(f"category:{kw}")
             break
-    for team in cfg.team_watchlist:
-        if team.lower() in haystack:
-            domain_reasons.append(f"watchlist:{team}")
+    for team in watchlist_hits:
+        domain_reasons.append(f"watchlist:{team}")
 
     if not domain_reasons:
         return []
 
-    reasons = list(domain_reasons)
+    timing_reason = None
     if market.end_date:
         delta = market.end_date - now
         if timedelta(0) <= delta <= cfg.imminent_window:
-            reasons.append(f"starts_in:{int(delta.total_seconds() // 60)}m")
+            timing_reason = f"starts_in:{int(delta.total_seconds() // 60)}m"
         elif -cfg.stale_grace <= delta < timedelta(0):
             # Event time has passed but market is still accepting trades -
             # this is the strongest forfeit/no-show signal.
-            reasons.append(f"past_end:{int(-delta.total_seconds() // 60)}m_still_open")
+            timing_reason = f"past_end:{int(-delta.total_seconds() // 60)}m_still_open"
 
+    if not timing_reason:
+        return []
+
+    reasons = list(domain_reasons)
+    reasons.append(timing_reason)
+    if is_h2h:
+        reasons.append("h2h")
     return reasons
 
 

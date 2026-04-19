@@ -61,7 +61,12 @@ def test_rejects_unrelated_category_without_watchlist():
 
 
 def test_watchlist_matches():
-    m = _mkt(category="Politics", event_title="", question="Will FaZe clan show up?")
+    m = _mkt(
+        category="CS2",
+        event_title="",
+        question="Will FaZe show up tonight?",
+        end_date=NOW + timedelta(hours=2),
+    )
     cfg = ScanConfig(team_watchlist=("FaZe",))
     opp = evaluate_market(m, cfg, now=NOW)
     assert opp is not None
@@ -71,3 +76,46 @@ def test_watchlist_matches():
 def test_rejects_closed_market():
     assert evaluate_market(_mkt(closed=True), ScanConfig(), now=NOW) is None
     assert evaluate_market(_mkt(accepting_orders=False), ScanConfig(), now=NOW) is None
+
+
+def test_rejects_outright_season_winner_without_h2h():
+    # "Will X win the 2026 season" - not head-to-head, no forfeit risk.
+    m = _mkt(
+        question="Will LNG Esports win the LPL 2026 season?",
+        category="esports",
+        end_date=NOW + timedelta(days=120),
+        prices=[0.993, 0.007],
+    )
+    assert evaluate_market(m, ScanConfig(), now=NOW) is None
+
+
+def test_mma_does_not_match_emma():
+    # Word-boundary check: "mma" in "Emma" must not trigger a category hit.
+    m = _mkt(
+        question="Will Emma Raducanu beat Iga Swiatek?",
+        category="Tennis",  # legit match via "tennis" keyword, not "mma"
+        event_title="Wimbledon",
+        end_date=NOW + timedelta(hours=3),
+    )
+    opp = evaluate_market(m, ScanConfig(), now=NOW)
+    assert opp is not None
+    assert any(r == "category:tennis" for r in opp.reasons)
+    assert not any("mma" in r for r in opp.reasons)
+
+
+def test_mma_does_not_match_commanders():
+    # "Commanders agree to name stadium after Trump" - not a match, not sports forfeit.
+    m = _mkt(
+        question="Washington Commanders agree to name stadium after Trump?",
+        category="Politics",
+        event_title="",
+        end_date=NOW + timedelta(days=60),
+        prices=[0.95, 0.05],
+    )
+    assert evaluate_market(m, ScanConfig(), now=NOW) is None
+
+
+def test_requires_imminent_timing():
+    # H2H + esports category but event is 6 months away - skip.
+    m = _mkt(end_date=NOW + timedelta(days=180))
+    assert evaluate_market(m, ScanConfig(), now=NOW) is None
