@@ -139,6 +139,60 @@ Config edits in the web UI take effect immediately (scanner thread restarts
 itself). If you edit `scanner.env` by hand, re-run `install-launchd.sh` so
 the new env vars are baked into the plist.
 
+## Deploy to a server (DigitalOcean / any Linux VPS)
+
+Run the scanner 24/7 on a $5/mo DigitalOcean Droplet with HTTPS.
+
+### Prerequisites
+
+- A Droplet (1 CPU, 1 GB RAM, Ubuntu 24.04)
+- SSH access (`ssh root@YOUR_IP`)
+- (Optional) A domain pointed at the Droplet's IP
+
+### One-command setup
+
+SSH into the Droplet and run:
+
+```bash
+git clone -b claude/poly-market-scanner-R3RKz https://github.com/TheLastHope1/Project-.git /opt/polymarket-scanner
+cd /opt/polymarket-scanner
+bash deploy/setup-droplet.sh
+```
+
+Or with a domain:
+
+```bash
+bash deploy/setup-droplet.sh scanner.yourdomain.com
+```
+
+The script prints your dashboard URL with the auth token at the end.
+If using IP-only, your browser will show a security warning for the
+self-signed cert — accept it once.
+
+### Managing the service
+
+```bash
+systemctl status polymarket-scanner    # is it running?
+systemctl restart polymarket-scanner   # restart after manual config edit
+systemctl stop polymarket-scanner      # stop
+journalctl -u polymarket-scanner -f    # tail logs live
+nano /opt/polymarket-scanner/scanner.env  # edit config
+```
+
+### Updating to latest code
+
+```bash
+cd /opt/polymarket-scanner
+git pull
+.venv/bin/pip install -r requirements.txt
+systemctl restart polymarket-scanner
+```
+
+### Config changes
+
+Use the Config tab in the web UI (changes take effect immediately), or
+edit `scanner.env` on the server and `systemctl restart polymarket-scanner`.
+
 ## Layout
 
 ```
@@ -160,9 +214,14 @@ scripts/
   install-launchd.sh  # installs the web UI + scanner as a macOS LaunchAgent
   uninstall-launchd.sh
   logs.sh
+deploy/
+  setup-droplet.sh               # one-command server deploy (Ubuntu/Debian)
+  polymarket-scanner.service     # systemd unit file
+  Caddyfile                      # reverse proxy (auto-TLS)
 tests/
   test_scanner.py
-scanner.env.example  # copy to scanner.env and edit
+Dockerfile              # optional, for Docker / fly.io / Railway
+scanner.env.example     # copy to scanner.env and edit
 ```
 
 ## Tests

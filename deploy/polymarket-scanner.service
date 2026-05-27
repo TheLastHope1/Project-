@@ -1,0 +1,27 @@
+[Unit]
+Description=Polymarket Forfeit-Edge Scanner (web UI + scanner daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+WorkingDirectory=/opt/polymarket-scanner
+ExecStart=/opt/polymarket-scanner/.venv/bin/python -m polymarket_scanner.web
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/opt/polymarket-scanner/scanner.env
+Environment=POLY_WEB_HOST=127.0.0.1
+Environment=POLY_WEB_PORT=8787
+Environment=POLY_DESKTOP=0
+Environment=POLY_AUTOSTART=1
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/polymarket-scanner
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

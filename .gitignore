@@ -6,4 +6,5 @@ venv/
 *.egg-info/
 .env
 scanner.env
+.scanner_token
 logs/
