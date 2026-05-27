@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..scanner import ScanConfig
+from ..client import PolymarketClient
+from ..scanner import ScanConfig, evaluate_markets
+from ..signals import PriceAnomalyWatcher
 from ..state import AppState, StateLogHandler
 from .auth import get_or_create_token, require_auth
 from .config_file import (
@@ -32,6 +35,13 @@ def _build_cfg_from_env() -> ScanConfig:
     return ScanConfig(**config_to_scanconfig_kwargs(read_config()))
 
 
+def _manual_scan_max_pages() -> int:
+    try:
+        return max(1, int(os.environ.get("POLY_WEB_SCAN_MAX_PAGES", "1")))
+    except ValueError:
+        return 1
+
+
 class ConfigUpdate(BaseModel):
     POLY_DESKTOP: str | None = Field(default=None)
     POLY_WEBHOOK_URL: str | None = Field(default=None)
@@ -46,6 +56,7 @@ class ConfigUpdate(BaseModel):
     POLY_MAX_CLOB_PROBES: str | None = Field(default=None)
     POLY_FEE_BPS: str | None = Field(default=None)
     POLY_SLIPPAGE_BUFFER_BPS: str | None = Field(default=None)
+    POLY_WEB_SCAN_MAX_PAGES: str | None = Field(default=None)
 
 
 def create_app() -> FastAPI:
@@ -123,6 +134,34 @@ def create_app() -> FastAPI:
     def api_stop() -> Any:
         stopped = runner.stop()
         return {"running": runner.is_running(), "stopped": stopped}
+
+    @app.post("/api/scan-now", dependencies=[Depends(auth)])
+    def api_scan_now() -> Any:
+        cfg = _build_cfg_from_env()
+        max_pages = _manual_scan_max_pages()
+        client = PolymarketClient()
+        now = datetime.now(timezone.utc)
+        markets = list(client.iter_active_markets(max_pages=max_pages))
+        watcher = PriceAnomalyWatcher(state, cfg)
+        try:
+            watcher.observe(markets)
+            watcher.observe_stale(markets)
+        except Exception:  # noqa: BLE001
+            log.exception("signal watcher failed during manual scan")
+        opps = evaluate_markets(markets, cfg, now, client=client)
+        state.set_opportunities(opps)
+        log.info(
+            "manual scan: markets=%d opportunities=%d max_pages=%d",
+            len(markets),
+            len(opps),
+            max_pages,
+        )
+        return {
+            "markets_scanned": len(markets),
+            "opportunities": len(opps),
+            "max_pages": max_pages,
+            "stats": state.snapshot_stats(),
+        }
 
     # --- lifecycle ---
     @app.on_event("startup")

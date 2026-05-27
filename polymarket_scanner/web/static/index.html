@@ -129,6 +129,7 @@
     <span id="last-scan"></span>
   </span>
   <div class="spacer"></div>
+  <button id="btn-scan-now" class="primary">Scan now</button>
   <button id="btn-start" class="primary">Start</button>
   <button id="btn-stop" class="danger">Stop</button>
 </header>
@@ -182,6 +183,10 @@
 
         <label for="POLY_MAX_CLOB_PROBES">POLY_MAX_CLOB_PROBES</label>
         <input id="POLY_MAX_CLOB_PROBES" name="POLY_MAX_CLOB_PROBES" placeholder="80" />
+
+        <label for="POLY_WEB_SCAN_MAX_PAGES">POLY_WEB_SCAN_MAX_PAGES</label>
+        <input id="POLY_WEB_SCAN_MAX_PAGES" name="POLY_WEB_SCAN_MAX_PAGES" placeholder="1" />
+        <div class="hint">Pages fetched by the web UI's on-demand Scan now action.</div>
 
         <label for="POLY_FEE_BPS">POLY_FEE_BPS</label>
         <input id="POLY_FEE_BPS" name="POLY_FEE_BPS" placeholder="0" />
@@ -395,6 +400,19 @@
   document.getElementById("btn-stop").addEventListener("click", async () => {
     try { await api("/api/stop", { method: "POST" }); toast("Scanner stopped"); refresh(); }
     catch (e) { toast("Stop failed", true); }
+  });
+  document.getElementById("btn-scan-now").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-scan-now");
+    btn.disabled = true;
+    try {
+      const data = await api("/api/scan-now", { method: "POST" });
+      toast(`Scanned ${data.markets_scanned} markets; ${data.opportunities} opportunities`);
+      refresh();
+    } catch (e) {
+      toast("Scan failed", true);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   async function loadConfig() {

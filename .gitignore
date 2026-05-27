@@ -8,3 +8,4 @@ venv/
 scanner.env
 .scanner_token
 logs/
+.vercel
