@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "builds": [
+    { "src": "app.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "app.py" }
+  ],
+  "functions": {
+    "app.py": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "env": {
+    "POLY_AUTOSTART": "0",
+    "POLY_WEB_SCAN_MAX_PAGES": "1",
+    "POLY_JOURNAL_PATH": "/tmp/journal.db",
+    "POLY_SCANNER_ENV_PATH": "/tmp/scanner.env"
+  }
+}

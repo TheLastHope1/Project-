@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from pathlib import Path
 
 from ..client import PolymarketClient
+from ..journal import Journal
 from ..notifier import build_default_notifier
 from ..scanner import Opportunity, ScanConfig, run_forever
 from ..signals import PriceAnomalyWatcher
@@ -16,8 +19,9 @@ log = logging.getLogger(__name__)
 class ScannerRunner:
     """Start / stop the scanner thread. Thread-safe."""
 
-    def __init__(self, state: AppState):
+    def __init__(self, state: AppState, journal: Journal | None = None):
         self.state = state
+        self.journal = journal
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
@@ -32,6 +36,10 @@ class ScannerRunner:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
+            # Make sure the journal is attached even if the caller forgot.
+            if self.journal is not None and cfg.journal is None:
+                cfg.journal = self.journal
+                cfg.persist_opportunities = True
             self._cfg = cfg
             self._stop_event = threading.Event()
             self._thread = threading.Thread(

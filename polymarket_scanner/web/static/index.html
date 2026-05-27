@@ -297,22 +297,34 @@
       body.innerHTML = '<div class="empty">No opportunities right now. Scanner is watching.</div>';
       return;
     }
+    const ruleBadge = (rc, conf) => {
+      if (!rc) return "—";
+      const safe = ["fifty_fifty_explicit", "walkover_fifty_fifty", "cricket_tie_fifty"];
+      const warn = ["clinching_exception", "advances_if_started", "unsafe_ambiguous", "no_fallback_language"];
+      const cls = safe.includes(rc) ? "severity-info" : (warn.includes(rc) ? "severity-warn" : "severity-alert");
+      const c = conf != null ? ` (${Number(conf).toFixed(2)})` : "";
+      return `<span class="${cls}">${escape(rc)}${c}</span>`;
+    };
     const html = `
       <table>
         <thead><tr>
-          <th>Score</th><th>Net Edge</th><th>Market</th><th>Underdog</th><th>Ask/Price</th>
-          <th>Screen</th><th>Spread</th><th>Liquidity</th><th>Ends</th><th>Why</th>
+          <th>Score</th><th>Model EV</th><th>Rule class</th><th>Market</th>
+          <th>Underdog</th><th>VWAP</th><th>Ask</th><th>Bid</th>
+          <th>Fee</th><th>P(50)</th><th>Liquidity</th><th>Ends</th><th>Why</th>
         </tr></thead>
         <tbody>
         ${rows.map(r => `
           <tr>
             <td class="edge">${r.score || 0}</td>
-            <td class="edge">${fmtPct(r.net_edge_pct ?? r.edge_pct)}</td>
-            <td><a href="${escape(r.url)}" target="_blank" rel="noopener">${escape(r.question)}</a><br><span class="reasons">${escape(r.price_source || "")}</span></td>
+            <td class="edge">${r.model_ev_pct != null ? fmtPct(r.model_ev_pct) : (r.net_edge_pct != null ? fmtPct(r.net_edge_pct) : "—")}</td>
+            <td class="mono" style="font-size:11px;">${ruleBadge(r.rule_class, r.rule_confidence)}</td>
+            <td><a href="${escape(r.url)}" target="_blank" rel="noopener">${escape(r.question)}</a><br><span class="reasons">${escape(r.price_source || "")}${r.fee_source ? " · fee:" + escape(r.fee_source) : ""}</span></td>
             <td>${escape(r.underdog_outcome)}</td>
-            <td class="num">${Number(r.underdog_price).toFixed(3)}</td>
-            <td class="num">${r.screen_price == null ? "—" : Number(r.screen_price).toFixed(3)}</td>
-            <td class="num">${r.spread == null ? "—" : Number(r.spread).toFixed(3)}</td>
+            <td class="num">${r.vwap_buy != null ? Number(r.vwap_buy).toFixed(3) : "—"}</td>
+            <td class="num">${r.best_ask != null ? Number(r.best_ask).toFixed(3) : Number(r.underdog_price).toFixed(3)}</td>
+            <td class="num">${r.best_bid != null ? Number(r.best_bid).toFixed(3) : "—"}</td>
+            <td class="num">${r.fee_rate != null ? (r.fee_rate * 100).toFixed(2) + "%" : "—"}</td>
+            <td class="num">${r.probability_fifty != null ? Number(r.probability_fifty).toFixed(2) : "—"}</td>
             <td class="num">${fmtUSD(r.liquidity)}</td>
             <td class="mono" style="font-size:11px;">${r.end_date ? fmtAgo(r.end_date).replace(" ago", "") : "—"}</td>
             <td class="reasons">${[...(r.score_reasons || []), ...(r.reasons || [])].map(escape).join(", ")}</td>

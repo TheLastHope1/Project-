@@ -72,6 +72,22 @@ def _opportunity_to_dict(opp: Opportunity) -> dict[str, Any]:
         "category": m.category,
         "event_title": m.event_title,
         "detected_at": opp.detected_at.isoformat(),
+        # Edge-detection upgrades. None when not computed yet.
+        "rule_class": opp.rule_class,
+        "rule_confidence": opp.rule_confidence,
+        "probability_fifty": opp.probability_fifty,
+        "rule_matched": opp.rule_matched or [],
+        "rule_contradicting": opp.rule_contradicting or [],
+        "tick_size": opp.tick_size,
+        "min_order_size": opp.min_order_size,
+        "ask_depth_usd": opp.ask_depth_usd,
+        "target_shares": opp.target_shares,
+        "vwap_buy": opp.vwap_buy,
+        "shares_fillable": opp.shares_fillable,
+        "fee_rate": opp.fee_rate,
+        "fee_source": opp.fee_source,
+        "model_ev_per_share": opp.model_ev_per_share,
+        "model_ev_pct": opp.model_ev_pct,
     }
 
 

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..client import PolymarketClient
+from ..journal import Journal
 from ..scanner import ScanConfig, evaluate_markets
 from ..signals import PriceAnomalyWatcher
 from ..state import AppState, StateLogHandler
@@ -31,8 +32,13 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def _build_cfg_from_env() -> ScanConfig:
-    return ScanConfig(**config_to_scanconfig_kwargs(read_config()))
+def _build_cfg_from_env(journal: Journal | None = None) -> ScanConfig:
+    kwargs = config_to_scanconfig_kwargs(read_config())
+    cfg = ScanConfig(**kwargs)
+    if journal is not None:
+        cfg.journal = journal
+        cfg.persist_opportunities = True
+    return cfg
 
 
 def _manual_scan_max_pages() -> int:
@@ -51,9 +57,16 @@ class ConfigUpdate(BaseModel):
     POLY_MIN_VOLUME: str | None = Field(default=None)
     POLY_INTERVAL: str | None = Field(default=None)
     POLY_MAX_SCREEN_PRICE: str | None = Field(default=None)
+    POLY_USE_BOOK: str | None = Field(default=None)
     POLY_USE_CLOB_PRICES: str | None = Field(default=None)
     POLY_REQUIRE_CLOB_PRICE: str | None = Field(default=None)
+    POLY_USE_CLOB_FEE_RATE: str | None = Field(default=None)
     POLY_MAX_CLOB_PROBES: str | None = Field(default=None)
+    POLY_PAPER_NOTIONAL: str | None = Field(default=None)
+    POLY_MIN_RULE_CONFIDENCE: str | None = Field(default=None)
+    POLY_MIN_P50: str | None = Field(default=None)
+    POLY_STRICT_RULE_CLASS: str | None = Field(default=None)
+    POLY_FEE_RATE_OVERRIDE: str | None = Field(default=None)
     POLY_FEE_BPS: str | None = Field(default=None)
     POLY_SLIPPAGE_BUFFER_BPS: str | None = Field(default=None)
     POLY_WEB_SCAN_MAX_PAGES: str | None = Field(default=None)
@@ -61,7 +74,13 @@ class ConfigUpdate(BaseModel):
 
 def create_app() -> FastAPI:
     state = AppState()
-    runner = ScannerRunner(state)
+    journal_path = os.environ.get("POLY_JOURNAL_PATH", "journal.db")
+    try:
+        journal = Journal(path=journal_path)
+    except Exception:  # noqa: BLE001 -- read-only deploys (e.g. Vercel) can't create the file
+        log.exception("could not open journal at %s; persistence disabled", journal_path)
+        journal = None
+    runner = ScannerRunner(state, journal=journal)
     token = get_or_create_token()
     auth = require_auth(token)
 
@@ -104,7 +123,14 @@ def create_app() -> FastAPI:
     @app.put("/api/config", dependencies=[Depends(auth)])
     def api_config_put(payload: ConfigUpdate) -> Any:
         updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-        saved = write_config(updates)
+        try:
+            saved = write_config(updates)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"config file is read-only on this deployment ({exc.strerror or exc!s}); "
+                       f"set values via environment variables instead",
+            ) from exc
 
         # Sync os.environ so notifier config (webhook, desktop) picks up the
         # new values on the next alert without a full restart.
@@ -115,7 +141,7 @@ def create_app() -> FastAPI:
         if runner.is_running():
             log.info("config changed - restarting scanner thread")
             runner.stop()
-            runner.start(_build_cfg_from_env())
+            runner.start(_build_cfg_from_env(journal=journal))
             restarted = True
 
         return {"config": saved, "scanner_restarted": restarted}
@@ -127,7 +153,7 @@ def create_app() -> FastAPI:
     def api_start(_: _StartRequest | None = None) -> Any:
         if runner.is_running():
             return {"running": True, "started": False, "message": "already running"}
-        started = runner.start(_build_cfg_from_env())
+        started = runner.start(_build_cfg_from_env(journal=journal))
         return {"running": runner.is_running(), "started": started}
 
     @app.post("/api/stop", dependencies=[Depends(auth)])
@@ -137,7 +163,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/scan-now", dependencies=[Depends(auth)])
     def api_scan_now() -> Any:
-        cfg = _build_cfg_from_env()
+        cfg = _build_cfg_from_env(journal=journal)
         max_pages = _manual_scan_max_pages()
         client = PolymarketClient()
         now = datetime.now(timezone.utc)
@@ -151,24 +177,68 @@ def create_app() -> FastAPI:
         opps = evaluate_markets(markets, cfg, now, client=client)
         state.set_opportunities(opps)
         log.info(
-            "manual scan: markets=%d opportunities=%d max_pages=%d",
+            "manual scan: markets=%d opportunities=%d max_pages=%d journal_rows=%d",
             len(markets),
             len(opps),
             max_pages,
+            journal.opportunity_count() if journal else -1,
         )
         return {
             "markets_scanned": len(markets),
             "opportunities": len(opps),
             "max_pages": max_pages,
             "stats": state.snapshot_stats(),
+            "journal_total_rows": journal.opportunity_count() if journal else None,
         }
+
+    @app.get("/api/journal/pnl", dependencies=[Depends(auth)])
+    def api_journal_pnl() -> Any:
+        if journal is None:
+            return JSONResponse({"error": "journal disabled in this deployment"}, status_code=503)
+        return journal.realised_pnl_summary()
+
+    @app.get("/api/journal/latest", dependencies=[Depends(auth)])
+    def api_journal_latest(limit: int = 100) -> Any:
+        if journal is None:
+            return JSONResponse({"error": "journal disabled in this deployment"}, status_code=503)
+        return {"rows": journal.latest_opportunities(limit=limit)}
+
+    @app.post("/api/validate-side-semantics", dependencies=[Depends(auth)])
+    def api_validate_side_semantics(token_id: str) -> Any:
+        """Cross-check ``/price`` BUY/SELL semantics against ``/book``.
+
+        Runs the contract test the PDF review identified as the single most
+        important integration check. Persists the result so a CI/cron job
+        can audit drift over time.
+        """
+        client = PolymarketClient()
+        result = client.validate_price_side_semantics(token_id)
+        if journal is not None:
+            try:
+                journal.record_side_semantics_check(
+                    checked_at=datetime.now(timezone.utc),
+                    token_id=token_id,
+                    ok=bool(result.get("ok")),
+                    buy_price=result.get("buy_price"),
+                    sell_price=result.get("sell_price"),
+                    best_bid=result.get("best_bid"),
+                    best_ask=result.get("best_ask"),
+                    notes=result.get("notes"),
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("failed to persist side-semantics check")
+        return result
 
     # --- lifecycle ---
     @app.on_event("startup")
     def _on_startup() -> None:
-        log.info("scanner web UI started; auth token prefix: %s...", token[:6])
+        # Don't log even a prefix of the auth token. Vercel/cloud log
+        # aggregators are not a safe place to leak secrets.
+        log.info("scanner web UI started; auth token length=%d", len(token))
+        if journal is not None:
+            log.info("journal enabled at %s (rows=%d)", journal.path, journal.opportunity_count())
         if os.environ.get("POLY_AUTOSTART", "1") == "1":
-            runner.start(_build_cfg_from_env())
+            runner.start(_build_cfg_from_env(journal=journal))
 
     @app.on_event("shutdown")
     def _on_shutdown() -> None:
