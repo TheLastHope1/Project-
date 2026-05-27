@@ -61,10 +61,14 @@ class ScannerRunner:
         watcher = PriceAnomalyWatcher(self.state, cfg)
         self.state.mark_started()
 
-        # Track the raw market list from the last scan so signal watchers can
-        # diff against the new one. scan_once currently only returns filtered
-        # Opportunity objects, so we need the pre-filter list too - we get that
-        # by iterating the client directly inside on_scan_complete.
+        def on_markets_scanned(markets):
+            markets = list(markets)
+            try:
+                watcher.observe(markets)
+                watcher.observe_stale(markets)
+            except Exception:  # noqa: BLE001
+                log.exception("signal watcher failed")
+
         def on_opportunity(opp: Opportunity) -> None:
             try:
                 notify(opp)
@@ -73,15 +77,6 @@ class ScannerRunner:
 
         def on_scan_complete(opps: list[Opportunity]) -> None:
             self.state.set_opportunities(opps)
-            # Feed the full (pre-filter) market list into the signal watchers
-            # so they can detect anomalies on markets that didn't clear the
-            # opportunity threshold this round.
-            try:
-                markets = list(client.iter_active_markets())
-                watcher.observe(markets)
-                watcher.observe_stale(markets)
-            except Exception:  # noqa: BLE001
-                log.exception("signal watcher failed")
 
         try:
             run_forever(
@@ -90,6 +85,7 @@ class ScannerRunner:
                 on_opportunity=on_opportunity,
                 stop_event=self._stop_event,
                 on_scan_complete=on_scan_complete,
+                on_markets_scanned=on_markets_scanned,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("scanner thread crashed")
