@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-command bootstrap for the Polymarket Scanner on a fresh Ubuntu 24.04
-# DigitalOcean Droplet (or any Debian-family server).
+# server (Azure B1s, DigitalOcean Droplet, or any Debian-family VPS).
 #
 # Usage:
 #   bash deploy/setup-droplet.sh                 # IP-only, self-signed TLS

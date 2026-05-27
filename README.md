@@ -139,27 +139,68 @@ Config edits in the web UI take effect immediately (scanner thread restarts
 itself). If you edit `scanner.env` by hand, re-run `install-launchd.sh` so
 the new env vars are baked into the plist.
 
-## Deploy to a server (DigitalOcean / any Linux VPS)
+## Deploy to Azure (Free with GitHub Student Pack)
 
-Run the scanner 24/7 on a $5/mo DigitalOcean Droplet with HTTPS.
+Run the scanner 24/7 on a free Azure B1s VM (1 vCPU, 1 GB RAM).
 
-### Prerequisites
+### Step 1: Create the VM
 
-- A Droplet (1 CPU, 1 GB RAM, Ubuntu 24.04)
-- SSH access (`ssh root@YOUR_IP`)
-- (Optional) A domain pointed at the Droplet's IP
+1. Go to [portal.azure.com](https://portal.azure.com) and sign in with your
+   GitHub Student account
+2. Click **Create a resource** → **Virtual Machine**
+3. Configure:
+   - **Subscription:** Azure for Students
+   - **Image:** Ubuntu Server 24.04 LTS
+   - **Size:** Standard_B1s (free tier — 750 hrs/mo)
+   - **Authentication:** SSH public key (paste from `cat ~/.ssh/id_rsa.pub`)
+   - **Inbound ports:** allow SSH (22)
+4. Click **Review + Create** → **Create**
+5. Once deployed, go to the VM → **Networking** → **Add inbound port rule**:
+   - Port **443** (HTTPS), Protocol TCP, Action Allow
+   - Port **80** (HTTP), Protocol TCP, Action Allow
+6. Note the VM's **Public IP address**
 
-### One-command setup
-
-SSH into the Droplet and run:
+### Step 2: Deploy
 
 ```bash
+ssh azureuser@YOUR_VM_IP
+sudo su -
 git clone -b claude/poly-market-scanner-R3RKz https://github.com/TheLastHope1/Project-.git /opt/polymarket-scanner
 cd /opt/polymarket-scanner
 bash deploy/setup-droplet.sh
 ```
 
-Or with a domain:
+The script prints your dashboard URL: `https://YOUR_IP/?token=...`
+
+Your browser will show a security warning (self-signed cert) — click
+**Advanced → Proceed** once. After that, the dashboard works from your
+phone or any browser, anywhere.
+
+### Cost: $0/month
+
+The B1s VM is free (750 hrs/mo = 24/7). Your $100 Azure credit is not
+touched. See [FEASIBILITY.md](FEASIBILITY.md) for full financial analysis.
+
+## Deploy to any Linux VPS (DigitalOcean, etc.)
+
+Same setup script works on any Ubuntu/Debian server:
+
+### Prerequisites
+
+- A VPS (1 CPU, 1 GB RAM, Ubuntu 24.04) — e.g. $5/mo DigitalOcean Droplet
+- SSH access (`ssh root@YOUR_IP`)
+- (Optional) A domain pointed at the server's IP
+
+### One-command setup
+
+```bash
+ssh root@YOUR_IP
+git clone -b claude/poly-market-scanner-R3RKz https://github.com/TheLastHope1/Project-.git /opt/polymarket-scanner
+cd /opt/polymarket-scanner
+bash deploy/setup-droplet.sh
+```
+
+Or with a domain (auto Let's Encrypt):
 
 ```bash
 bash deploy/setup-droplet.sh scanner.yourdomain.com
