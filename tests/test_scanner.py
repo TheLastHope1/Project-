@@ -119,3 +119,101 @@ def test_requires_imminent_timing():
     # H2H + esports category but event is 6 months away - skip.
     m = _mkt(end_date=NOW + timedelta(days=180))
     assert evaluate_market(m, ScanConfig(), now=NOW) is None
+
+
+def test_preserves_outcome_price_mapping_with_blank_gamma_price():
+    from polymarket_scanner.client import _parse_market
+
+    row = {
+        "id": "m2",
+        "question": "Team A vs Team B",
+        "slug": "a-b",
+        "endDate": "2026-04-19T13:00:00Z",
+        "active": True,
+        "closed": False,
+        "acceptingOrders": True,
+        "outcomes": '["Team A", "Team B"]',
+        "outcomePrices": '["", "0.24"]',
+        "clobTokenIds": '["tokA", "tokB"]',
+        "volume": 1000,
+        "liquidity": 1000,
+        "category": "CS2",
+    }
+    market = _parse_market(row)
+    assert market is not None
+    assert market.prices == [None, 0.24]
+    assert market.underdog_outcome == "Team B"
+    assert market.underdog_token_id == "tokB"
+
+
+def test_uses_clob_ask_for_edge_when_available():
+    from polymarket_scanner.client import TopOfBookQuote
+
+    m = _mkt(token_ids=["yes", "no"])
+    opp = evaluate_market(
+        m,
+        ScanConfig(),
+        now=NOW,
+        execution_quote=TopOfBookQuote("no", "SELL", 0.30, "clob_test"),
+        bid_quote=TopOfBookQuote("no", "BUY", 0.27, "clob_test"),
+    )
+    assert opp is not None
+    assert opp.underdog_price == 0.30
+    assert opp.screen_price == 0.20
+    assert opp.price_source == "clob_test"
+    assert opp.spread == 0.03
+    assert "exec_ask" in opp.reasons
+
+
+def test_require_clob_price_drops_gamma_only_candidate():
+    cfg = ScanConfig(require_clob_price=True)
+    assert evaluate_market(_mkt(), cfg, now=NOW) is None
+
+
+def test_evaluate_markets_uses_sell_side_as_executable_ask():
+    from polymarket_scanner.client import TopOfBookQuote
+    from polymarket_scanner.scanner import evaluate_markets
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+        def get_best_prices_batch(self, token_ids, side="BUY"):
+            self.calls.append((tuple(token_ids), side))
+            if side == "SELL":
+                return {"no": TopOfBookQuote("no", "SELL", 0.30, "clob_ask")}
+            return {"no": TopOfBookQuote("no", "BUY", 0.27, "clob_bid")}
+
+    client = FakeClient()
+    opps = evaluate_markets([_mkt(token_ids=["yes", "no"])], ScanConfig(), now=NOW, client=client)
+
+    assert client.calls == [(("no",), "SELL"), (("no",), "BUY")]
+    assert len(opps) == 1
+    assert opps[0].underdog_price == 0.30
+    assert opps[0].best_ask == 0.30
+    assert opps[0].best_bid == 0.27
+
+
+def test_run_forever_reuses_single_market_snapshot_for_signals():
+    from polymarket_scanner.scanner import run_forever
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+        def iter_active_markets(self):
+            self.calls += 1
+            return iter([_mkt()])
+        def get_best_prices_batch(self, token_ids, side="BUY"):
+            return {}
+
+    client = FakeClient()
+    snapshots = []
+    run_forever(
+        client,
+        ScanConfig(use_clob_prices=False),
+        on_opportunity=lambda opp: None,
+        max_iterations=1,
+        on_markets_scanned=lambda markets: snapshots.append(list(markets)),
+    )
+    assert client.calls == 1
+    assert len(snapshots) == 1
+    assert len(snapshots[0]) == 1
