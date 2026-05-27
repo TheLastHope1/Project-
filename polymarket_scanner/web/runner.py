@@ -61,11 +61,14 @@ class ScannerRunner:
         watcher = PriceAnomalyWatcher(self.state, cfg)
         self.state.mark_started()
 
+        last_markets = []
+
         def on_markets_scanned(markets):
-            markets = list(markets)
+            nonlocal last_markets
+            last_markets = list(markets)
             try:
-                watcher.observe(markets)
-                watcher.observe_stale(markets)
+                watcher.observe(last_markets)
+                watcher.observe_stale(last_markets)
             except Exception:  # noqa: BLE001
                 log.exception("signal watcher failed")
 
