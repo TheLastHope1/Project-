@@ -127,7 +127,7 @@ def create_app() -> FastAPI:
     # --- lifecycle ---
     @app.on_event("startup")
     def _on_startup() -> None:
-        log.info("scanner web UI started; auth token prefix: %s…", token[:6])
+        log.info("scanner web UI started; auth token prefix: %s...", token[:6])
         if os.environ.get("POLY_AUTOSTART", "1") == "1":
             runner.start(_build_cfg_from_env())
 
