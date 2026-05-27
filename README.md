@@ -24,7 +24,7 @@ manual investigation.
 ## What changed in the edge-hunting version
 
 - **CLOB executable-price enrichment:** Gamma prices are used as a broad radar,
-  then candidate underdogs are probed against public CLOB BUY/SELL prices. The
+  then candidate underdogs are probed for public CLOB best ask/bid prices. The
   dashboard now shows screen price, ask/price, spread, source, net edge, and a
   score.
 - **Outcome-price mapping fix:** blank Gamma prices no longer shift the outcome
@@ -55,7 +55,7 @@ A market becomes an opportunity when it clears these layers:
 5. Timing is actionable: event starts soon or scheduled end has already passed
    while the market is still open.
 6. If CLOB probing is enabled, the scanner tries to replace the screen price
-   with the executable BUY ask and compute net edge from that.
+   with the executable ask and compute net edge from that.
 
 ## Important edge mindset
 
@@ -96,7 +96,7 @@ Key settings:
 | `POLY_WATCHLIST` | comma-separated teams/entities to force closer review |
 | `POLY_MAX_PRICE` | final alert threshold for executable/screen underdog price |
 | `POLY_MAX_SCREEN_PRICE` | broad Gamma radar threshold before CLOB probing |
-| `POLY_USE_CLOB_PRICES` | `1` probes public CLOB BUY/SELL prices for candidates |
+| `POLY_USE_CLOB_PRICES` | `1` probes public CLOB best ask/bid prices for candidates |
 | `POLY_REQUIRE_CLOB_PRICE` | `1` drops candidates unless executable ask is fetched |
 | `POLY_MAX_CLOB_PROBES` | max token IDs to probe per scan |
 | `POLY_FEE_BPS` | conservative fee haircut for displayed net edge |
@@ -165,4 +165,4 @@ The existing Azure/VPS scripts still work, but the recommended deployment path i
 python -m pytest tests/
 ```
 
-Current local status: 15 tests passing.
+Current local status: 16 tests passing.
