@@ -143,7 +143,7 @@
 <main>
   <section id="tab-opportunities">
     <div class="panel">
-      <h2>Live forfeit-edge opportunities</h2>
+      <h2>Live edge candidates (manual-review)</h2>
       <div id="opportunities-body"><div class="empty">No opportunities yet. The scanner runs every 2 min.</div></div>
     </div>
   </section>
@@ -166,6 +166,29 @@
         <label for="POLY_MAX_PRICE">POLY_MAX_PRICE</label>
         <input id="POLY_MAX_PRICE" name="POLY_MAX_PRICE" placeholder="0.40" />
         <div class="hint">Only alert when the underdog trades at or below this price (0.0–1.0).</div>
+
+
+        <label for="POLY_MAX_SCREEN_PRICE">POLY_MAX_SCREEN_PRICE</label>
+        <input id="POLY_MAX_SCREEN_PRICE" name="POLY_MAX_SCREEN_PRICE" placeholder="0.49" />
+        <div class="hint">Broad Gamma radar threshold before executable CLOB price check.</div>
+
+        <label for="POLY_USE_CLOB_PRICES">POLY_USE_CLOB_PRICES</label>
+        <input id="POLY_USE_CLOB_PRICES" name="POLY_USE_CLOB_PRICES" placeholder="1" />
+        <div class="hint">1 = probe public CLOB best ask/bid prices for candidates.</div>
+
+        <label for="POLY_REQUIRE_CLOB_PRICE">POLY_REQUIRE_CLOB_PRICE</label>
+        <input id="POLY_REQUIRE_CLOB_PRICE" name="POLY_REQUIRE_CLOB_PRICE" placeholder="0" />
+        <div class="hint">1 = drop candidates unless executable ask can be fetched.</div>
+
+        <label for="POLY_MAX_CLOB_PROBES">POLY_MAX_CLOB_PROBES</label>
+        <input id="POLY_MAX_CLOB_PROBES" name="POLY_MAX_CLOB_PROBES" placeholder="80" />
+
+        <label for="POLY_FEE_BPS">POLY_FEE_BPS</label>
+        <input id="POLY_FEE_BPS" name="POLY_FEE_BPS" placeholder="0" />
+
+        <label for="POLY_SLIPPAGE_BUFFER_BPS">POLY_SLIPPAGE_BUFFER_BPS</label>
+        <input id="POLY_SLIPPAGE_BUFFER_BPS" name="POLY_SLIPPAGE_BUFFER_BPS" placeholder="0" />
+        <div class="hint">Conservative haircuts used only for displayed net edge.</div>
 
         <label for="POLY_MIN_LIQUIDITY">POLY_MIN_LIQUIDITY</label>
         <input id="POLY_MIN_LIQUIDITY" name="POLY_MIN_LIQUIDITY" placeholder="500" />
@@ -272,20 +295,22 @@
     const html = `
       <table>
         <thead><tr>
-          <th>Edge</th><th>Market</th><th>Underdog</th><th>Price</th>
-          <th>Liquidity</th><th>Volume</th><th>Ends</th><th>Why</th>
+          <th>Score</th><th>Net Edge</th><th>Market</th><th>Underdog</th><th>Ask/Price</th>
+          <th>Screen</th><th>Spread</th><th>Liquidity</th><th>Ends</th><th>Why</th>
         </tr></thead>
         <tbody>
         ${rows.map(r => `
           <tr>
-            <td class="edge">${fmtPct(r.edge_pct)}</td>
-            <td><a href="${escape(r.url)}" target="_blank" rel="noopener">${escape(r.question)}</a></td>
+            <td class="edge">${r.score || 0}</td>
+            <td class="edge">${fmtPct(r.net_edge_pct ?? r.edge_pct)}</td>
+            <td><a href="${escape(r.url)}" target="_blank" rel="noopener">${escape(r.question)}</a><br><span class="reasons">${escape(r.price_source || "")}</span></td>
             <td>${escape(r.underdog_outcome)}</td>
-            <td class="num">${r.underdog_price.toFixed(3)}</td>
+            <td class="num">${Number(r.underdog_price).toFixed(3)}</td>
+            <td class="num">${r.screen_price == null ? "—" : Number(r.screen_price).toFixed(3)}</td>
+            <td class="num">${r.spread == null ? "—" : Number(r.spread).toFixed(3)}</td>
             <td class="num">${fmtUSD(r.liquidity)}</td>
-            <td class="num">${fmtUSD(r.volume)}</td>
             <td class="mono" style="font-size:11px;">${r.end_date ? fmtAgo(r.end_date).replace(" ago", "") : "—"}</td>
-            <td class="reasons">${r.reasons.map(escape).join(", ")}</td>
+            <td class="reasons">${[...(r.score_reasons || []), ...(r.reasons || [])].map(escape).join(", ")}</td>
           </tr>`).join("")}
         </tbody>
       </table>`;
