@@ -34,8 +34,9 @@ def _desktop_available() -> str | None:
 
 def desktop_notifier(opp: Opportunity) -> None:
     tool = _desktop_available()
-    title = f"Polymarket edge {opp.edge_pct:+.0%}"
-    body = f"{opp.underdog_outcome} @ {opp.underdog_price:.2f} - {opp.market.question[:120]}"
+    shown_edge = opp.net_edge_pct if opp.net_edge_pct is not None else opp.edge_pct
+    title = f"Polymarket edge {shown_edge:+.0%} score {opp.score}"
+    body = f"{opp.underdog_outcome} @ {opp.underdog_price:.2f} ({opp.price_source}) - {opp.market.question[:120]}"
     try:
         if tool == "notify-send":
             subprocess.run(["notify-send", title, body], check=False, timeout=5)
@@ -58,7 +59,15 @@ def webhook_notifier(url: str) -> Notifier:
             "question": opp.market.question,
             "underdog_outcome": opp.underdog_outcome,
             "underdog_price": opp.underdog_price,
+            "screen_price": opp.screen_price,
+            "price_source": opp.price_source,
             "edge_pct": opp.edge_pct,
+            "net_edge_pct": opp.net_edge_pct,
+            "score": opp.score,
+            "score_reasons": opp.score_reasons or [],
+            "best_ask": opp.best_ask,
+            "best_bid": opp.best_bid,
+            "spread": opp.spread,
             "reasons": opp.reasons,
             "url": opp.market.url,
         }
