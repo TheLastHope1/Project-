@@ -234,11 +234,12 @@ class PolymarketClient:
                 return
 
     def get_best_prices_batch(self, token_ids: Iterable[str], side: str = "BUY") -> dict[str, TopOfBookQuote]:
-        """Return best executable BUY/SELL price for token IDs.
+        """Return CLOB price endpoint quotes for token IDs.
 
-        BUY is the best ask you would pay to buy shares. SELL is the best bid.
-        The CLOB public API has changed shape before, so this method tries the
-        documented batch endpoint and then falls back to per-token GET calls.
+        Polymarket's price endpoint returns the best bid for BUY side and the
+        best ask for SELL side. The CLOB public API has changed shape before, so
+        this method tries the documented batch endpoint and then falls back to
+        per-token GET calls.
         """
         clean_ids = []
         seen = set()
