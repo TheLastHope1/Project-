@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Deque
 
@@ -55,7 +55,16 @@ def _opportunity_to_dict(opp: Opportunity) -> dict[str, Any]:
         "url": m.url,
         "underdog_outcome": opp.underdog_outcome,
         "underdog_price": opp.underdog_price,
+        "screen_price": opp.screen_price,
+        "price_source": opp.price_source,
+        "underdog_token_id": opp.underdog_token_id,
+        "best_ask": opp.best_ask,
+        "best_bid": opp.best_bid,
+        "spread": opp.spread,
         "edge_pct": opp.edge_pct,
+        "net_edge_pct": opp.net_edge_pct,
+        "score": opp.score,
+        "score_reasons": opp.score_reasons or [],
         "reasons": opp.reasons,
         "liquidity": m.liquidity,
         "volume": m.volume,
@@ -109,7 +118,7 @@ class AppState:
     def snapshot_opportunities(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = [_opportunity_to_dict(o) for o in self._opportunities.values()]
-        rows.sort(key=lambda r: r["edge_pct"], reverse=True)
+        rows.sort(key=lambda r: (r.get("score") or 0, r.get("net_edge_pct") or r["edge_pct"]), reverse=True)
         return rows
 
     def snapshot_signals(self, limit: int = 100) -> list[dict[str, Any]]:
