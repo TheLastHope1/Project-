@@ -17,7 +17,7 @@ team/player social accounts, livestream pages, and bookmaker score feeds.
 ### 2. Display price vs executable ask mismatch
 
 Gamma/outcome price can be a midpoint or stale display value. The scanner probes
-CLOB BUY prices for candidates so the alert is based on what you may actually pay.
+CLOB best asks for candidates so the alert is based on what you may actually pay.
 
 Action: compare `screen_price` with `Ask/Price`. A lower ask than screen price is
 interesting. A much higher ask means the displayed edge is probably fake.
