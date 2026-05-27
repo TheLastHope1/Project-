@@ -173,16 +173,44 @@
         <input id="POLY_MAX_SCREEN_PRICE" name="POLY_MAX_SCREEN_PRICE" placeholder="0.49" />
         <div class="hint">Broad Gamma radar threshold before executable CLOB price check.</div>
 
+        <label for="POLY_USE_BOOK">POLY_USE_BOOK</label>
+        <input id="POLY_USE_BOOK" name="POLY_USE_BOOK" placeholder="1" />
+        <div class="hint">1 = use /book (depth-aware) as the executable-price source.</div>
+
         <label for="POLY_USE_CLOB_PRICES">POLY_USE_CLOB_PRICES</label>
         <input id="POLY_USE_CLOB_PRICES" name="POLY_USE_CLOB_PRICES" placeholder="1" />
-        <div class="hint">1 = probe public CLOB best ask/bid prices for candidates.</div>
+        <div class="hint">1 = fall back to /price when /book is unavailable.</div>
 
         <label for="POLY_REQUIRE_CLOB_PRICE">POLY_REQUIRE_CLOB_PRICE</label>
         <input id="POLY_REQUIRE_CLOB_PRICE" name="POLY_REQUIRE_CLOB_PRICE" placeholder="0" />
         <div class="hint">1 = drop candidates unless executable ask can be fetched.</div>
 
+        <label for="POLY_USE_CLOB_FEE_RATE">POLY_USE_CLOB_FEE_RATE</label>
+        <input id="POLY_USE_CLOB_FEE_RATE" name="POLY_USE_CLOB_FEE_RATE" placeholder="0" />
+        <div class="hint">1 = fetch per-token fee rate from /fee-rate (one extra API call per candidate).</div>
+
         <label for="POLY_MAX_CLOB_PROBES">POLY_MAX_CLOB_PROBES</label>
         <input id="POLY_MAX_CLOB_PROBES" name="POLY_MAX_CLOB_PROBES" placeholder="80" />
+
+        <label for="POLY_PAPER_NOTIONAL">POLY_PAPER_NOTIONAL</label>
+        <input id="POLY_PAPER_NOTIONAL" name="POLY_PAPER_NOTIONAL" placeholder="100" />
+        <div class="hint">USDC notional per paper-trade entry. Drives VWAP fills in the journal.</div>
+
+        <label for="POLY_STRICT_RULE_CLASS">POLY_STRICT_RULE_CLASS</label>
+        <input id="POLY_STRICT_RULE_CLASS" name="POLY_STRICT_RULE_CLASS" placeholder="0" />
+        <div class="hint">1 = drop markets whose rule class is never-trade (OTHER_OUTCOME, REFUND_VOID, UNKNOWN_EXPLICIT, TIE_ONLY).</div>
+
+        <label for="POLY_MIN_RULE_CONFIDENCE">POLY_MIN_RULE_CONFIDENCE</label>
+        <input id="POLY_MIN_RULE_CONFIDENCE" name="POLY_MIN_RULE_CONFIDENCE" placeholder="0.0" />
+        <div class="hint">Drop candidates below this classifier confidence (0.0 to 1.0).</div>
+
+        <label for="POLY_MIN_P50">POLY_MIN_P50</label>
+        <input id="POLY_MIN_P50" name="POLY_MIN_P50" placeholder="0.0" />
+        <div class="hint">Drop candidates with modelled P(50/50) below this. Try 0.8 for strict deploys.</div>
+
+        <label for="POLY_FEE_RATE_OVERRIDE">POLY_FEE_RATE_OVERRIDE</label>
+        <input id="POLY_FEE_RATE_OVERRIDE" name="POLY_FEE_RATE_OVERRIDE" placeholder="" />
+        <div class="hint">Force one fee rate (e.g. 0.03). Leave blank to use category/CLOB rate.</div>
 
         <label for="POLY_WEB_SCAN_MAX_PAGES">POLY_WEB_SCAN_MAX_PAGES</label>
         <input id="POLY_WEB_SCAN_MAX_PAGES" name="POLY_WEB_SCAN_MAX_PAGES" placeholder="1" />
