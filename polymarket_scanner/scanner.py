@@ -43,7 +43,7 @@ _RULE_DANGER_RE = re.compile(
 @dataclass
 class ScanConfig:
     # Final alert threshold. If CLOB probing is enabled, this is applied to the
-    # executable BUY price. Otherwise it applies to the Gamma screen price.
+    # executable ask. Otherwise it applies to the Gamma screen price.
     max_underdog_price: float = 0.40
 
     # Broad first-pass screen. Keep this near 0.49 to catch display/orderbook
@@ -65,8 +65,8 @@ class ScanConfig:
     scan_interval: timedelta = timedelta(minutes=2)
 
     # Execution sanity. Gamma/outcomePrices are useful as a radar, but the CLOB
-    # BUY price is what you can actually lift. Keep fallback on while researching;
-    # turn require_clob_price on once deployment is stable.
+    # ask is what you can actually lift. Keep fallback on while researching; turn
+    # require_clob_price on once deployment is stable.
     use_clob_prices: bool = True
     require_clob_price: bool = False
     max_clob_probes_per_scan: int = 80
@@ -305,8 +305,10 @@ def evaluate_markets(
     if cfg.use_clob_prices and client is not None:
         token_ids = [m.underdog_token_id for m in raw_candidates[:cfg.max_clob_probes_per_scan] if m.underdog_token_id]
         try:
-            ask_quotes = client.get_best_prices_batch(token_ids, side="BUY")
-            bid_quotes = client.get_best_prices_batch(token_ids, side="SELL")
+            # Polymarket /price semantics: BUY returns the best bid, SELL returns
+            # the best ask. For a buyer's executable price, lift the SELL side.
+            ask_quotes = client.get_best_prices_batch(token_ids, side="SELL")
+            bid_quotes = client.get_best_prices_batch(token_ids, side="BUY")
         except Exception:  # noqa: BLE001 - CLOB probing is a ranking enhancer, not a scanner killer
             log.exception("clob price enrichment failed")
 
