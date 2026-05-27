@@ -40,6 +40,12 @@ class ConfigUpdate(BaseModel):
     POLY_MIN_LIQUIDITY: str | None = Field(default=None)
     POLY_MIN_VOLUME: str | None = Field(default=None)
     POLY_INTERVAL: str | None = Field(default=None)
+    POLY_MAX_SCREEN_PRICE: str | None = Field(default=None)
+    POLY_USE_CLOB_PRICES: str | None = Field(default=None)
+    POLY_REQUIRE_CLOB_PRICE: str | None = Field(default=None)
+    POLY_MAX_CLOB_PROBES: str | None = Field(default=None)
+    POLY_FEE_BPS: str | None = Field(default=None)
+    POLY_SLIPPAGE_BUFFER_BPS: str | None = Field(default=None)
 
 
 def create_app() -> FastAPI:
