@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .client import PolymarketClient
-from .journal import Journal
+from .journal import Journal, make_journal
 from .notifier import build_default_notifier
 from .scanner import ScanConfig, run_forever, scan_once
 
@@ -70,7 +70,13 @@ def _parse_args() -> argparse.Namespace:
                    help="Stream the opportunities table as JSONL to PATH and exit.")
     p.add_argument("--journal-path",
                    default=os.environ.get("POLY_JOURNAL_PATH", "journal.db"),
-                   help="SQLite journal file. Defaults to ./journal.db or $POLY_JOURNAL_PATH.")
+                   help="SQLite journal file. Defaults to ./journal.db or $POLY_JOURNAL_PATH. "
+                        "Ignored if --journal-url is set.")
+    p.add_argument("--journal-url",
+                   default=os.environ.get("POLY_JOURNAL_URL"),
+                   help="Postgres connection string (postgres://...) for the durable journal "
+                        "backend. Use this for Vercel/serverless deploys. Supports Supabase, "
+                        "Vercel Postgres, Neon, or any Postgres.")
 
     # ---- scanning config ----
     p.add_argument("--interval", type=int,
@@ -212,10 +218,11 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # One Journal instance for this process. Passed into ``ScanConfig.journal``
-    # so ``evaluate_markets`` writes here without consulting the module-level
-    # singleton (which is reserved for tests).
-    journal = Journal(path=Path(args.journal_path))
+    # One journal instance for this process. ``make_journal`` routes
+    # ``postgres://`` URLs to PostgresJournal and file paths to SQLite. Passed
+    # into ``ScanConfig.journal`` so ``evaluate_markets`` writes here without
+    # consulting the module-level singleton.
+    journal = make_journal(args.journal_url or args.journal_path)
 
     # One-off subcommands.
     if args.validate_side_semantics:

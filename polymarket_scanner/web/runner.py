@@ -7,11 +7,13 @@ import threading
 from pathlib import Path
 
 from ..client import PolymarketClient
-from ..journal import Journal
 from ..notifier import build_default_notifier
 from ..scanner import Opportunity, ScanConfig, run_forever
 from ..signals import PriceAnomalyWatcher
 from ..state import AppState
+
+if False:  # TYPE_CHECKING -- Journal is duck-typed; both SQLite + Postgres satisfy it.
+    from ..journal import Journal  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +21,8 @@ log = logging.getLogger(__name__)
 class ScannerRunner:
     """Start / stop the scanner thread. Thread-safe."""
 
-    def __init__(self, state: AppState, journal: Journal | None = None):
+    def __init__(self, state: AppState, journal: object | None = None):
+        # journal is duck-typed: either ``Journal`` (SQLite) or ``PostgresJournal``.
         self.state = state
         self.journal = journal
         self._thread: threading.Thread | None = None

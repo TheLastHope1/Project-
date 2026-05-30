@@ -137,8 +137,9 @@ Key new variables:
 | `POLY_STRICT_RULE_CLASS` | `1` drops never-trade classes. |
 | `POLY_MIN_RULE_CONFIDENCE` | Drop candidates below this classifier confidence. |
 | `POLY_MIN_P50` | Drop candidates below this modelled P(50/50). |
-| `POLY_PERSIST` | `1` (default in CLI/web) writes every snapshot to SQLite. |
+| `POLY_PERSIST` | `1` (default in CLI/web) writes every snapshot to the journal. |
 | `POLY_JOURNAL_PATH` | SQLite file path. Default `journal.db`. Override to `/tmp/journal.db` on read-only filesystems. |
+| `POLY_JOURNAL_URL` | Postgres connection string (`postgres://...`) for the durable backend. Required for Vercel / serverless. Supports Supabase, Vercel Postgres, Neon, or self-hosted. When set, takes precedence over `POLY_JOURNAL_PATH`. |
 
 ## Paper-trade workflow
 
@@ -167,11 +168,18 @@ The repo supports three deployment modes:
   `deploy/setup-droplet.sh` script or run `python -m polymarket_scanner.web`
   under systemd / launchd.
 - **Vercel serverless.** `vercel.json` sets `maxDuration=60`, redirects
-  the journal and config file to `/tmp`, and disables autostart. Set
-  `POLY_AUTH_TOKEN` and `POLY_WEBHOOK_URL` as Vercel environment variables.
-  Note: the in-memory scanner thread does not survive between requests, so
-  alerts only fire from `/api/scan-now` invocations (e.g. wired to Vercel
-  Cron).
+  the SQLite fallback to `/tmp`, and disables autostart. Required Vercel
+  environment variables:
+  - `POLY_AUTH_TOKEN` — any stable random string (the dashboard auth token).
+    Without this, different lambda containers see different tokens.
+  - `POLY_JOURNAL_URL` — Postgres connection string (Supabase session
+    pooler / Vercel Postgres / Neon). Without this, the journal lives in
+    per-instance `/tmp` and is wiped on cold start.
+  - `POLY_WEBHOOK_URL` (optional) — Discord/Slack webhook for alerts.
+
+  The in-memory scanner thread does not survive between requests, so
+  alerts only fire from `/api/scan-now` invocations. Wire it to Vercel
+  Cron for periodic scanning.
 - **Docker** via the included `Dockerfile`.
 
 ## Tests

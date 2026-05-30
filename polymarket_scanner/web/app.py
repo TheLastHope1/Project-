@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..client import PolymarketClient
-from ..journal import Journal
+from ..journal import make_journal
 from ..scanner import ScanConfig, evaluate_markets
 from ..signals import PriceAnomalyWatcher
 from ..state import AppState, StateLogHandler
@@ -74,11 +74,16 @@ class ConfigUpdate(BaseModel):
 
 def create_app() -> FastAPI:
     state = AppState()
-    journal_path = os.environ.get("POLY_JOURNAL_PATH", "journal.db")
+    # Prefer the durable Postgres backend when POLY_JOURNAL_URL is set
+    # (required for serverless deploys); fall back to SQLite at
+    # POLY_JOURNAL_PATH otherwise. Either path can fail on a read-only
+    # filesystem -- in that case we run with persistence disabled rather
+    # than refusing to boot.
+    journal_target = os.environ.get("POLY_JOURNAL_URL") or os.environ.get("POLY_JOURNAL_PATH", "journal.db")
     try:
-        journal = Journal(path=journal_path)
-    except Exception:  # noqa: BLE001 -- read-only deploys (e.g. Vercel) can't create the file
-        log.exception("could not open journal at %s; persistence disabled", journal_path)
+        journal = make_journal(journal_target)
+    except Exception:  # noqa: BLE001
+        log.exception("could not open journal at %s; persistence disabled", journal_target)
         journal = None
     runner = ScannerRunner(state, journal=journal)
     token = get_or_create_token()

@@ -466,3 +466,27 @@ def reset_default_journal_for_tests(journal: Journal | None) -> None:
     global _default_journal
     with _default_lock:
         _default_journal = journal
+
+
+def make_journal(url_or_path: str | Path | None = None):
+    """Factory returning the right Journal backend for the given target.
+
+    - ``postgres://`` / ``postgresql://`` → ``PostgresJournal`` (Supabase,
+      Vercel Postgres, Neon, self-hosted). Required for serverless deploys
+      where local SQLite is per-instance ephemeral.
+    - Anything else (or ``None``) → SQLite ``Journal`` at that path, or
+      ``$POLY_JOURNAL_URL`` env var, or ``$POLY_JOURNAL_PATH``, or
+      ``journal.db``.
+
+    Lazy-imports ``PostgresJournal`` so SQLite-only users don't pay the
+    psycopg cold-start cost.
+    """
+    if url_or_path is None:
+        url_or_path = os.environ.get("POLY_JOURNAL_URL") or os.environ.get("POLY_JOURNAL_PATH") or "journal.db"
+    if isinstance(url_or_path, Path):
+        return Journal(path=url_or_path)
+    val = str(url_or_path).strip()
+    if val.startswith(("postgres://", "postgresql://")):
+        from .journal_postgres import PostgresJournal
+        return PostgresJournal(val)
+    return Journal(path=val)
