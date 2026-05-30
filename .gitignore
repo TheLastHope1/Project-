@@ -15,6 +15,7 @@ data/
 dist/
 build/
 .vercel
+supabase/.temp/
 journal.db
 *.db
 *.db-wal

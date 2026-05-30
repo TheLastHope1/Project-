@@ -89,6 +89,10 @@ REAL_MONEY_ACKNOWLEDGED=false
 ALLOW_MARKET_ORDERS=false
 ```
 
+For Vercel, prefer the Supabase transaction pooler URL. The engine detects `pooler.supabase.com` and disables psycopg prepared statements for that connection, which avoids transaction-pooler incompatibilities.
+
+The canonical Supabase schema is tracked in `supabase/migrations/` and mirrored in `src/polymarket_edge/db/schema.sql`.
+
 Generate the admin token with:
 
 ```bash
