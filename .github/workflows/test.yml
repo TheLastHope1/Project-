@@ -32,3 +32,6 @@ jobs:
         env:
           PYTHONPATH: .
         run: pytest -q
+
+      - name: Run Ruff
+        run: ruff check .

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polymarket-edge"
+version = "0.1.0"
+description = "Polymarket live-data, edge-detection, arbitrage, backtesting, paper-trading, and guarded tiny-live trading system."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "httpx>=0.27",
+  "pydantic>=2.0",
+  "pydantic-settings>=2.2",
+  "SQLAlchemy>=2.0",
+  "psycopg[binary]>=3.1.18",
+  "pandas>=2.0",
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "streamlit>=1.36",
+  "uvicorn[standard]>=0.27",
+  "plotly>=5.20",
+  "python-dotenv>=1.0",
+  "tenacity>=8.2",
+  "structlog>=24.0",
+  "websockets>=12",
+]
+
+[project.scripts]
+polymarket-edge = "polymarket_edge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+  "polymarket_scanner",
+  "tests/test_client_book.py",
+  "tests/test_fees.py",
+  "tests/test_journal.py",
+  "tests/test_journal_factory.py",
+  "tests/test_scanner.py",
+  "tests/test_scanner_book.py",
+  "tests/test_taxonomy.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

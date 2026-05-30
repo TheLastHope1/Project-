@@ -1,9 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
   "env": {
-    "POLY_AUTOSTART": "0",
-    "POLY_WEB_SCAN_MAX_PAGES": "1",
-    "POLY_JOURNAL_PATH": "/tmp/journal.db",
-    "POLY_SCANNER_ENV_PATH": "/tmp/scanner.env"
+    "DATA_MODE": "public",
+    "TRADING_MODE": "paper",
+    "LIVE_TRADING_ENABLED": "false",
+    "REAL_MONEY_ACKNOWLEDGED": "false",
+    "ALLOW_MARKET_ORDERS": "false"
   }
 }
