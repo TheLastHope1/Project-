@@ -50,6 +50,26 @@ def test_rejects_when_underdog_too_expensive():
     assert evaluate_market(m, ScanConfig(max_underdog_price=0.40), now=NOW) is None
 
 
+def test_hard_profitability_floor_rejects_price_above_50c():
+    # A generous --max-price > 0.5 must NOT unlock break-even alerts. The
+    # 50/50 payout is $0.50/share, so anything >= $0.50 is at best zero
+    # gross edge (negative after fees). Codex review caught this on PR #4.
+    #
+    # Realistic scenario: the Gamma midpoint shows the underdog at 0.20 (so
+    # the screen filter waves it through), but the executable best ask on
+    # /book is 0.51 because the book moved while the midpoint hadn't ticked.
+    # Without the hard floor, --max-price=0.60 would still produce an alert
+    # at 0.51 with negative gross edge.
+    from polymarket_scanner.client import TopOfBookQuote
+    m = _mkt(token_ids=["yes", "no"])
+    cfg = ScanConfig(max_underdog_price=0.60, max_screen_price=0.60)
+    opp = evaluate_market(
+        m, cfg, now=NOW,
+        execution_quote=TopOfBookQuote("no", "SELL", 0.51, "clob_test"),
+    )
+    assert opp is None
+
+
 def test_rejects_low_liquidity():
     m = _mkt(liquidity=50.0)
     assert evaluate_market(m, ScanConfig(), now=NOW) is None

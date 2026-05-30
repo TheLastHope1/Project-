@@ -106,7 +106,10 @@ class ScanConfig:
     # paper-trade journal set ``persist_opportunities=True`` explicitly. The
     # library never silently writes to disk, which keeps tests and one-shot
     # scans free of side effects.
-    journal: Journal | None = field(default=None, repr=False)
+    #
+    # The journal is duck-typed: ``Journal`` (SQLite) and ``PostgresJournal``
+    # share the same public method signatures.
+    journal: object | None = field(default=None, repr=False)
     persist_opportunities: bool = False
 
     # Legacy bps haircuts kept for back-compat with old env files. They no
@@ -409,6 +412,14 @@ def evaluate_market(
     if price <= 0 or price > cfg.max_underdog_price:
         return None
 
+    # Hard profitability floor, independent of the configurable threshold.
+    # A 50/50 fallback pays $0.50 per share; buying at >= $0.50 is at best
+    # break-even before fees and negative after them. Reject regardless of
+    # what the user passed in --max-price so a generous threshold can't
+    # produce false-positive "edge".
+    if price >= 0.5:
+        return None
+
     # ---- structured rule classification ----
     classification: RuleClassification = classify_rules(
         market.rule_text, outcomes=market.outcomes
@@ -520,7 +531,7 @@ def evaluate_market(
 
 
 def _persist_opportunity(
-    journal: Journal | None,
+    journal: object | None,
     opp: Opportunity,
     *,
     book: OrderBook | None,
