@@ -9,3 +9,6 @@ scanner.env
 .scanner_token
 logs/
 .vercel
+journal.db
+*.db-wal
+*.db-shm
