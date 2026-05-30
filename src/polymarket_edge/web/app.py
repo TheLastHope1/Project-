@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from polymarket_edge.arbitrage.binary_scanner import scan_binary_arbitrage
+from polymarket_edge.arbitrage.logical_scanner import scan_logical_arbitrage
 from polymarket_edge.backtest.backtester import run_backtest
 from polymarket_edge.config import get_settings
 from polymarket_edge.db.models import EdgeSnapshot, Market, OrderbookSnapshot, PaperOrder, Token
@@ -209,6 +210,18 @@ def create_app() -> FastAPI:
     def api_binary_arb(session: SessionDep) -> dict[str, Any]:
         arbs = [arb.to_dict() for arb in scan_binary_arbitrage(session)]
         return {"count": len(arbs), "arbitrage": arbs}
+
+    @app.get("/api/logical-arb")
+    def api_logical_arb(session: SessionDep, locked_only: bool = False) -> dict[str, Any]:
+        results = scan_logical_arbitrage(session)
+        if locked_only:
+            results = [r for r in results if r.arb_type == "LOCKED"]
+        rows = [r.to_dict() for r in results]
+        return {
+            "count": len(rows),
+            "locked": sum(1 for r in rows if r["arb_type"] == "LOCKED"),
+            "candidates": rows,
+        }
 
     @app.get("/api/paper-orders")
     def api_paper_orders(session: SessionDep, limit: int = 50) -> dict[str, Any]:

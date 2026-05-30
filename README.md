@@ -68,6 +68,7 @@ Public read-only endpoints:
 - `GET /api/status`
 - `GET /api/edges`
 - `GET /api/binary-arb`
+- `GET /api/logical-arb` (add `?locked_only=true` for risk-free pairs only)
 - `GET /api/paper-orders`
 - `GET /api/live-preflight`
 

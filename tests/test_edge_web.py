@@ -95,6 +95,51 @@ def test_web_public_status_and_edges(tmp_path, monkeypatch):
     assert edges.json()["edges"][0]["token_id"] == "yes"
 
 
+def _seed_logical_ladder(tmp_path: Path) -> None:
+    engine = make_engine(f"sqlite:///{tmp_path / 'web.db'}")
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    now = datetime.now(UTC)
+    end = datetime(2026, 12, 31, tzinfo=UTC)
+    for mid_id, question, yes_bid, yes_ask in [
+        ("m100", "Will BTC reach $100k by 2026?", 0.60, 0.62),
+        ("m90", "Will BTC reach $90k by 2026?", 0.48, 0.50),
+    ]:
+        session.add(
+            Market(market_id=mid_id, event_id="evt", question=question, active=True, closed=False, end_date=end, raw_json={})
+        )
+        session.add(Token(token_id=f"{mid_id}-yes", market_id=mid_id, outcome="Yes", outcome_index=0, raw_json={}))
+        session.add(
+            OrderbookSnapshot(
+                token_id=f"{mid_id}-yes",
+                timestamp=now,
+                best_bid=yes_bid,
+                best_ask=yes_ask,
+                mid=(yes_bid + yes_ask) / 2,
+                spread=yes_ask - yes_bid,
+                bid_depth=[{"price": yes_bid, "size": 50}],
+                ask_depth=[{"price": yes_ask, "size": 50}],
+                raw_json={},
+            )
+        )
+    session.commit()
+    session.close()
+
+
+def test_web_logical_arb_endpoint(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    _seed_logical_ladder(tmp_path)
+
+    response = client.get("/api/logical-arb")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["locked"] == 1
+    assert body["candidates"][0]["arb_type"] == "LOCKED"
+    assert body["candidates"][0]["strong_market_id"] == "m100"
+
+    locked_only = client.get("/api/logical-arb?locked_only=true")
+    assert locked_only.json()["count"] == 1
+
+
 def test_web_status_handles_uninitialized_database(tmp_path, monkeypatch):
     client = _client_without_schema(tmp_path, monkeypatch)
 

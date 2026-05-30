@@ -283,7 +283,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "scan-logical-arb":
             candidates = [candidate.to_dict() for candidate in scan_logical_arbitrage(session)]
-            _print_json({"count": len(candidates), "candidates": candidates})
+            locked = sum(1 for c in candidates if c["arb_type"] == "LOCKED")
+            _print_json({"count": len(candidates), "locked": locked, "candidates": candidates})
             return 0
 
         if args.command == "paper-trade":
