@@ -1,0 +1,8 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.scanner_token
+scanner.env
+*.tar.gz

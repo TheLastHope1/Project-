@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+.env
+scanner.env
+.scanner_token
+logs/
+.vercel
+journal.db
+*.db-wal
+*.db-shm

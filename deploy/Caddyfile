@@ -1,0 +1,15 @@
+# Polymarket Scanner reverse proxy.
+#
+# === OPTION A: Domain name (auto Let's Encrypt) ===
+# Uncomment and replace with your domain. Caddy auto-provisions TLS.
+#
+# scanner.example.com {
+#     reverse_proxy 127.0.0.1:8787
+# }
+
+# === OPTION B: IP-only (self-signed TLS) ===
+# Your browser will show a security warning once — accept it.
+:443 {
+    tls internal
+    reverse_proxy 127.0.0.1:8787
+}

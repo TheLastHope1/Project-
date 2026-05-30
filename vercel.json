@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "env": {
+    "POLY_AUTOSTART": "0",
+    "POLY_WEB_SCAN_MAX_PAGES": "1",
+    "POLY_JOURNAL_PATH": "/tmp/journal.db",
+    "POLY_SCANNER_ENV_PATH": "/tmp/scanner.env"
+  }
+}

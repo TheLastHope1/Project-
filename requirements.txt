@@ -1,0 +1,10 @@
+requests>=2.31.0
+python-dateutil>=2.9.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+# Optional Postgres backend for the paper-trade journal. Required when
+# POLY_JOURNAL_URL is set to a postgres:// connection string (e.g. Supabase,
+# Vercel Postgres, Neon). The [binary] extra ships prebuilt wheels so no
+# libpq install step is needed on Vercel/Linux/macOS.
+psycopg[binary]>=3.1.18
