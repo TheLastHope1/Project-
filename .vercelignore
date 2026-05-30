@@ -4,6 +4,10 @@
 .ruff_cache
 __pycache__
 *.pyc
+tests
+polymarket_scanner
+src/polymarket_edge/dashboard
+.github
 .scanner_token
 scanner.env
 .env

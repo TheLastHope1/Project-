@@ -1,10 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/**/*.py": {
-      "excludeFiles": "{tests/**,polymarket_scanner/**,src/polymarket_edge/dashboard/**,deploy/**,*.tar.gz,*.db,*.db-wal,*.db-shm}"
-    }
-  },
+  "installCommand": "python -m pip install .",
   "rewrites": [
     {
       "source": "/(.*)",
