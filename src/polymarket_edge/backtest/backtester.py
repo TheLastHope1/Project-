@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import timedelta
+from math import sqrt
 from statistics import mean, median
 from typing import Any
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,26 @@ def _max_drawdown(values: list[float]) -> float:
     return max_dd
 
 
+def _population_std(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    avg = mean(values)
+    return sqrt(mean((value - avg) ** 2 for value in values))
+
+
+def _correlation(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right) or len(left) < 2:
+        return 0.0
+    left_std = _population_std(left)
+    right_std = _population_std(right)
+    if left_std == 0 or right_std == 0:
+        return 0.0
+    left_avg = mean(left)
+    right_avg = mean(right)
+    covariance = mean((x - left_avg) * (y - right_avg) for x, y in zip(left, right, strict=True))
+    return covariance / (left_std * right_std)
+
+
 def run_backtest(session: Session, holding_period_seconds: int = 3600) -> BacktestResult:
     edges = list(
         session.execute(
@@ -81,10 +101,8 @@ def run_backtest(session: Session, holding_period_seconds: int = 3600) -> Backte
 
     if not pnls:
         return BacktestResult(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    pnl_arr = np.asarray(pnls, dtype=float)
-    edge_arr = np.asarray(edge_values, dtype=float)
-    corr = float(np.corrcoef(edge_arr, pnl_arr)[0, 1]) if len(pnls) > 1 and np.std(edge_arr) > 0 and np.std(pnl_arr) > 0 else 0.0
-    std = float(np.std(pnl_arr))
+    corr = float(_correlation(edge_values, pnls))
+    std = float(_population_std(pnls))
     return BacktestResult(
         trades=len(pnls),
         total_pnl=float(sum(pnls)),
@@ -97,4 +115,3 @@ def run_backtest(session: Session, holding_period_seconds: int = 3600) -> Backte
         average_realized_pnl=float(mean(pnls)),
         edge_to_pnl_correlation=corr,
     )
-

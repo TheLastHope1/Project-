@@ -14,19 +14,32 @@ dependencies = [
   "pydantic-settings>=2.2",
   "SQLAlchemy>=2.0",
   "psycopg[binary]>=3.1.18",
-  "pandas>=2.0",
-  "numpy>=1.26",
-  "scipy>=1.11",
-  "pytest>=8",
-  "pytest-asyncio>=0.23",
-  "ruff>=0.5",
-  "streamlit>=1.36",
-  "uvicorn[standard]>=0.27",
-  "plotly>=5.20",
   "python-dotenv>=1.0",
   "tenacity>=8.2",
   "structlog>=24.0",
+  "uvicorn[standard]>=0.27",
   "websockets>=12",
+]
+
+[project.optional-dependencies]
+dashboard = [
+  "pandas>=2.0",
+  "plotly>=5.20",
+  "streamlit>=1.36",
+]
+math = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+]
+dev = [
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "plotly>=5.20",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "scipy>=1.11",
+  "streamlit>=1.36",
 ]
 
 [project.scripts]
