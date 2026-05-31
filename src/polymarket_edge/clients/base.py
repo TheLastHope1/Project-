@@ -41,9 +41,10 @@ class APIClient:
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         return await self._client.request(method, path, **kwargs)
 
-    async def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    async def get_json(self, path: str, params: dict[str, Any] | None = None,
+                       headers: dict[str, str] | None = None) -> Any:
         try:
-            response = await self._request("GET", path, params=params)
+            response = await self._request("GET", path, params=params, headers=headers)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
@@ -52,6 +53,19 @@ class APIClient:
             log.warning("http_request_error", url=f"{self.base_url}{path}", error=str(exc))
         except ValueError as exc:
             log.warning("json_decode_error", url=f"{self.base_url}{path}", error=str(exc))
+        return None
+
+    async def get_text(self, path: str, params: dict[str, Any] | None = None,
+                        headers: dict[str, str] | None = None) -> str | None:
+        """GET returning raw text (for RSS/XML feeds). None on any error."""
+        try:
+            response = await self._request("GET", path, params=params, headers=headers)
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPStatusError as exc:
+            log.warning("http_status_error", url=str(exc.request.url), status=exc.response.status_code)
+        except httpx.HTTPError as exc:
+            log.warning("http_request_error", url=f"{self.base_url}{path}", error=str(exc))
         return None
 
     async def post_json(self, path: str, payload: Any) -> Any:

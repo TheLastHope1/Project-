@@ -226,3 +226,52 @@ class KillSwitchEvent(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
 
+
+class NewsItem(Base):
+    """A single normalized news/breaking item from any source.
+
+    ``dedup_hash`` is a stable hash of the normalized title+url so the same
+    story arriving from multiple feeds is stored once. ``entities`` is a list
+    of extracted entity/keyword strings used for deterministic market linking.
+    """
+
+    __tablename__ = "news_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedup_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # rss|gdelt|newsapi|twitter
+    source_name: Mapped[str | None] = mapped_column(String(255))  # e.g. "Reuters"
+    url: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(String(16))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    entities: Mapped[dict[str, Any]] = mapped_column(json_type(), default=list, nullable=False)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
+
+
+class NewsSignal(Base):
+    """A news item linked to a specific market with a directional read.
+
+    ``implied_p`` is the news-derived probability estimate for the YES token
+    (the independent p_hat the edge engine otherwise lacks). ``direction`` is
+    YES_UP / YES_DOWN / NONE. ``model`` records provenance ("deterministic"
+    or e.g. "claude-...") so signals can be audited and filtered.
+    """
+
+    __tablename__ = "news_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    news_id: Mapped[int] = mapped_column(Integer, ForeignKey("news_items.id"), nullable=False, index=True)
+    market_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    token_id: Mapped[str | None] = mapped_column(String(256), index=True)
+    relevance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), default="NONE", nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    implied_p: Mapped[float | None] = mapped_column(Float)
+    model: Mapped[str] = mapped_column(String(64), default="deterministic", nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
+

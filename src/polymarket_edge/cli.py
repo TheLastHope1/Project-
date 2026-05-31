@@ -28,6 +28,8 @@ from polymarket_edge.ingestion.trades_ingestor import ingest_trades
 from polymarket_edge.ingestion.user_ws import stream_user
 from polymarket_edge.models.edge_engine import score_market
 from polymarket_edge.models.probability import baseline_probability
+from polymarket_edge.news.edge import scan_news_edges
+from polymarket_edge.news.ingest import ingest_news
 from polymarket_edge.secrets.manager import redacted_secret_status
 from polymarket_edge.secrets.setup_wizard import setup_secrets
 from polymarket_edge.trading.client import balances, cancel_all, open_orders
@@ -149,6 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("scan-binary-arb")
     sub.add_parser("scan-logical-arb")
+
+    p_news = sub.add_parser("ingest-news")
+    p_news.add_argument("--query-terms", default=None,
+                        help="Comma-separated extra query terms (overrides POLY/NEWS defaults).")
+
+    p_news_edges = sub.add_parser("scan-news-edges")
+    p_news_edges.add_argument("--max-items", type=int, default=None)
 
     p_paper = sub.add_parser("paper-trade")
     p_paper.add_argument("--from-latest-edges", action="store_true")
@@ -285,6 +294,21 @@ def main(argv: list[str] | None = None) -> int:
             candidates = [candidate.to_dict() for candidate in scan_logical_arbitrage(session)]
             locked = sum(1 for c in candidates if c["arb_type"] == "LOCKED")
             _print_json({"count": len(candidates), "locked": locked, "candidates": candidates})
+            return 0
+
+        if args.command == "ingest-news":
+            terms = (
+                [t.strip() for t in args.query_terms.split(",") if t.strip()]
+                if args.query_terms
+                else None
+            )
+            summary = asyncio.run(ingest_news(session, query_terms=terms))
+            _print_json(asdict(summary))
+            return 0
+
+        if args.command == "scan-news-edges":
+            summary = scan_news_edges(session, max_items=args.max_items)
+            _print_json(asdict(summary))
             return 0
 
         if args.command == "paper-trade":

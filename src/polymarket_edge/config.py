@@ -72,6 +72,33 @@ class Settings(BaseSettings):
     POLYMARKET_API_PASSPHRASE: str = ""
     POLYMARKET_EDGE_API_TOKEN: str = ""
 
+    # --- News / breaking-signal ingestion -------------------------------
+    # Comma-separated enabled sources. "rss" and "gdelt" are keyless and on by
+    # default; "newsapi" and "twitter" activate only when their key is set.
+    NEWS_SOURCES: str = "rss,gdelt"
+    NEWS_LOOKBACK_HOURS: float = 24.0
+    NEWS_MAX_ITEMS_PER_SOURCE: int = 100
+    # Extra Google-News / GDELT query terms (comma-separated). Empty = use the
+    # default breaking-news topic queries baked into the RSS/GDELT clients.
+    NEWS_QUERY_TERMS: str = ""
+    # Deterministic linking knobs.
+    NEWS_MIN_OVERLAP: int = 1
+    NEWS_MAX_CANDIDATES_PER_ITEM: int = 5
+    # Relevance engine: "hybrid" | "deterministic" | "llm".
+    NEWS_RELEVANCE_MODE: str = "hybrid"
+    # Cost guard: cap how many news items get LLM adjudication per scan.
+    NEWS_LLM_MAX_ITEMS: int = 25
+    # A news signal must clear these to count as an edge candidate.
+    NEWS_MIN_RELEVANCE: float = 0.5
+    NEWS_MIN_CONFIDENCE: float = 0.5
+    NEWS_EDGE_MIN_NET: float = 0.05
+
+    # Keys for optional sources / LLM. Blank disables that capability.
+    NEWSAPI_KEY: str = ""
+    X_BEARER_TOKEN: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+
     @field_validator("DATABASE_URL")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:
@@ -84,6 +111,32 @@ class Settings(BaseSettings):
     @property
     def env_path(self) -> Path:
         return Path(".env.local")
+
+    @property
+    def news_query_terms(self) -> list[str]:
+        return [t.strip() for t in self.NEWS_QUERY_TERMS.split(",") if t.strip()]
+
+    @property
+    def enabled_news_sources(self) -> list[str]:
+        """Sources that are both requested and actually usable.
+
+        "rss"/"gdelt" are keyless. "newsapi" needs NEWSAPI_KEY; "twitter"
+        needs X_BEARER_TOKEN -- they are silently dropped if their key is
+        absent so the pipeline never fails closed on a missing optional key.
+        """
+        requested = [s.strip().lower() for s in self.NEWS_SOURCES.split(",") if s.strip()]
+        usable: list[str] = []
+        for source in requested:
+            if source == "newsapi" and not self.NEWSAPI_KEY:
+                continue
+            if source == "twitter" and not self.X_BEARER_TOKEN:
+                continue
+            usable.append(source)
+        return usable
+
+    @property
+    def llm_relevance_enabled(self) -> bool:
+        return self.NEWS_RELEVANCE_MODE in ("hybrid", "llm") and bool(self.ANTHROPIC_API_KEY)
 
 
 @lru_cache(maxsize=1)

@@ -14,11 +14,20 @@ from polymarket_edge.arbitrage.binary_scanner import scan_binary_arbitrage
 from polymarket_edge.arbitrage.logical_scanner import scan_logical_arbitrage
 from polymarket_edge.backtest.backtester import run_backtest
 from polymarket_edge.config import get_settings
-from polymarket_edge.db.models import EdgeSnapshot, Market, OrderbookSnapshot, PaperOrder, Token
+from polymarket_edge.db.models import (
+    EdgeSnapshot,
+    Market,
+    NewsItem,
+    OrderbookSnapshot,
+    PaperOrder,
+    Token,
+)
 from polymarket_edge.db.session import get_session, init_db
 from polymarket_edge.execution.paper_trader import paper_trade_from_latest_edges
 from polymarket_edge.ingestion.market_discovery import discover_markets
 from polymarket_edge.ingestion.orderbook_poller import poll_orderbooks_once
+from polymarket_edge.news.edge import scan_news_edges
+from polymarket_edge.news.ingest import ingest_news
 from polymarket_edge.trading.kill_switch import trigger_kill_switch
 from polymarket_edge.trading.preflight import live_preflight
 
@@ -140,6 +149,59 @@ def _scan_edges_latest(session: Session) -> dict[str, int]:
     return scan_edges_latest(session, include_all=False)
 
 
+def _recent_news(session: Session, limit: int = 50) -> list[dict[str, Any]]:
+    rows = session.execute(
+        select(NewsItem).order_by(NewsItem.fetched_at.desc()).limit(max(1, min(limit, 200)))
+    ).scalars()
+    return [
+        {
+            "id": row.id,
+            "source": row.source,
+            "source_name": row.source_name,
+            "title": row.title,
+            "url": row.url,
+            "published_at": row.published_at,
+            "fetched_at": row.fetched_at,
+            "entities": row.entities,
+        }
+        for row in rows
+    ]
+
+
+def _news_edges(session: Session, limit: int = 50) -> list[dict[str, Any]]:
+    """Read-only view of persisted news-sourced edges (source=news)."""
+    stmt = (
+        select(EdgeSnapshot)
+        .where(EdgeSnapshot.action.in_(("BUY", "SELL")))
+        .order_by(EdgeSnapshot.timestamp.desc())
+        .limit(max(1, min(limit, 200)))
+    )
+    out: list[dict[str, Any]] = []
+    for row in session.execute(stmt).scalars():
+        raw = row.raw_json or {}
+        if raw.get("source") != "news":
+            continue
+        out.append(
+            {
+                "id": row.id,
+                "timestamp": row.timestamp,
+                "market_id": row.market_id,
+                "token_id": row.token_id,
+                "action": row.action,
+                "p_hat": row.p_hat,
+                "bid": row.bid,
+                "ask": row.ask,
+                "net_edge": row.net_edge,
+                "kelly_size": row.kelly_size,
+                "headline": raw.get("headline"),
+                "direction": raw.get("direction"),
+                "rationale": raw.get("rationale"),
+                "model": raw.get("model"),
+            }
+        )
+    return out
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Polymarket Edge", version="0.1.0")
 
@@ -227,6 +289,15 @@ def create_app() -> FastAPI:
     def api_paper_orders(session: SessionDep, limit: int = 50) -> dict[str, Any]:
         return {"orders": _paper_orders(session, limit=limit)}
 
+    @app.get("/api/news")
+    def api_news(session: SessionDep, limit: int = 50) -> dict[str, Any]:
+        return {"news": _recent_news(session, limit=limit)}
+
+    @app.get("/api/news-edges")
+    def api_news_edges(session: SessionDep, limit: int = 50) -> dict[str, Any]:
+        edges = _news_edges(session, limit=limit)
+        return {"count": len(edges), "edges": edges}
+
     @app.get("/api/live-preflight")
     def api_live_preflight(session: SessionDep) -> dict[str, Any]:
         checks = [check.to_dict() for check in live_preflight(session)]
@@ -252,6 +323,14 @@ def create_app() -> FastAPI:
     @app.post("/api/admin/scan-edges")
     def api_scan_edges(session: SessionDep, _: AdminAuth) -> dict[str, Any]:
         return _scan_edges_latest(session)
+
+    @app.post("/api/admin/ingest-news")
+    def api_ingest_news(session: SessionDep, _: AdminAuth) -> dict[str, Any]:
+        return asyncio.run(ingest_news(session)).__dict__
+
+    @app.post("/api/admin/scan-news-edges")
+    def api_scan_news_edges(session: SessionDep, _: AdminAuth, max_items: int | None = None) -> dict[str, Any]:
+        return scan_news_edges(session, max_items=max_items).__dict__
 
     @app.post("/api/admin/paper-trade")
     def api_paper_trade(session: SessionDep, _: AdminAuth) -> dict[str, Any]:
