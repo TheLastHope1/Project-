@@ -57,6 +57,7 @@ def test_hybrid_falls_back_to_deterministic_without_key(monkeypatch):
 
 def test_llm_verdicts_parse_mocked_response(monkeypatch):
     monkeypatch.setenv("NEWS_RELEVANCE_MODE", "llm")
+    monkeypatch.setenv("NEWS_LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     reload_settings()
 
@@ -104,6 +105,7 @@ def test_llm_verdicts_parse_mocked_response(monkeypatch):
 def test_llm_request_shape_has_cache_control_and_schema(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setenv("NEWS_RELEVANCE_MODE", "llm")
+    monkeypatch.setenv("NEWS_LLM_PROVIDER", "anthropic")
     reload_settings()
     captured = {}
 
@@ -133,6 +135,66 @@ def test_llm_request_shape_has_cache_control_and_schema(monkeypatch):
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert captured["body"]["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert captured["body"]["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_deepseek_openai_compatible_request_shape(monkeypatch):
+    monkeypatch.setenv("NEWS_RELEVANCE_MODE", "llm")
+    monkeypatch.setenv("NEWS_LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    reload_settings()
+    captured = {}
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "verdicts": [
+                                {
+                                    "market_id": "m1",
+                                    "relevant": True,
+                                    "direction": "YES_UP",
+                                    "confidence": 0.7,
+                                    "implied_probability": 0.6,
+                                    "rationale": "News raises the odds.",
+                                }
+                            ]
+                        }
+                    )
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+
+    def fake_post(url, headers=None, json=None):  # noqa: A002
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["body"] = json
+        return resp
+
+    client = MagicMock()
+    client.post.side_effect = fake_post
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    monkeypatch.setattr(relevance.httpx, "Client", lambda *a, **k: client)
+
+    verdicts = relevance.llm_verdicts(
+        RawNewsItem(source="rss", title="x"),
+        [Candidate("m1", "Will x happen?", 1.0, [], ["x"])],
+        get_settings(),
+    )
+
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    assert captured["headers"]["authorization"] == "Bearer sk-test"
+    assert captured["body"]["model"] == "deepseek-v4-pro"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert verdicts[0].model == "deepseek-v4-pro"
+    assert verdicts[0].direction == "YES_UP"
 
 
 # ---- news -> edge end to end (deterministic LLM stub) -------------------

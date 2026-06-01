@@ -11,10 +11,12 @@ Two engines, selected by ``Settings.NEWS_RELEVANCE_MODE``:
   * ``deterministic`` -- rules-only. Marks candidates relevant by linker
     overlap but leaves direction NONE and ``implied_p`` unset. Free, no key,
     always available. Conservative by design.
-  * ``hybrid`` / ``llm`` -- calls the Claude Messages API (Sonnet) to score
+  * ``hybrid`` / ``llm`` -- calls the configured LLM provider to score
     relevance + direction + confidence + implied probability per candidate.
-    Behind ``ANTHROPIC_API_KEY``; on any failure it degrades to the
-    deterministic verdict so the pipeline never hard-fails on the LLM.
+    ``NEWS_LLM_PROVIDER=auto`` prefers DeepSeek, Azure OpenAI, generic
+    OpenAI-compatible, then Anthropic if their explicit keys are present. On
+    any failure, hybrid mode degrades to the deterministic verdict so the
+    pipeline never hard-fails on the LLM.
 
 The Messages API is called directly via httpx (already a dependency) rather
 than the Anthropic SDK, to keep the Vercel serverless bundle slim. The static
@@ -215,19 +217,158 @@ def _call_anthropic(
     return verdicts if isinstance(verdicts, list) else None
 
 
+@dataclass(frozen=True)
+class _ChatProviderConfig:
+    provider: str
+    base_url: str
+    model: str
+    api_key: str
+    auth_header: str
+    extra_body: dict[str, Any]
+
+
+def _chat_provider_config(settings: Settings) -> _ChatProviderConfig | None:
+    provider = settings.resolved_news_llm_provider
+    if provider == "deepseek":
+        return _ChatProviderConfig(
+            provider="deepseek",
+            base_url=settings.DEEPSEEK_BASE_URL,
+            model=settings.DEEPSEEK_MODEL,
+            api_key=settings.DEEPSEEK_API_KEY,
+            auth_header="authorization",
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+    if provider == "openai_compatible":
+        return _ChatProviderConfig(
+            provider="openai_compatible",
+            base_url=settings.OPENAI_COMPATIBLE_BASE_URL,
+            model=settings.OPENAI_COMPATIBLE_MODEL,
+            api_key=settings.OPENAI_COMPATIBLE_API_KEY,
+            auth_header="authorization",
+            extra_body={},
+        )
+    if provider == "azure_openai":
+        return _ChatProviderConfig(
+            provider="azure_openai",
+            base_url=settings.AZURE_OPENAI_BASE_URL,
+            model=settings.AZURE_OPENAI_MODEL,
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            auth_header="api-key",
+            extra_body={},
+        )
+    return None
+
+
+def _chat_url(config: _ChatProviderConfig) -> str:
+    base = config.base_url.rstrip("/")
+    if config.provider == "azure_openai":
+        if base.endswith("/openai/v1"):
+            return f"{base}/chat/completions"
+        if "/openai/deployments/" in base:
+            return f"{base}/chat/completions"
+        return f"{base}/openai/v1/chat/completions"
+    return f"{base}/chat/completions"
+
+
+def _chat_headers(config: _ChatProviderConfig) -> dict[str, str]:
+    headers = {"content-type": "application/json"}
+    if config.auth_header == "api-key":
+        headers["api-key"] = config.api_key
+    else:
+        headers["authorization"] = f"Bearer {config.api_key}"
+    return headers
+
+
+def _strip_json_fence(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.removeprefix("```json").removeprefix("```").strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+    return cleaned
+
+
+def _call_openai_compatible(
+    news: RawNewsItem,
+    candidates: list[Candidate],
+    settings: Settings,
+    timeout: float,
+) -> list[dict[str, Any]] | None:
+    config = _chat_provider_config(settings)
+    if config is None:
+        return None
+    body = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_payload(news, candidates)},
+        ],
+        "temperature": 0,
+        "max_tokens": 2048,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+        **config.extra_body,
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(_chat_url(config), headers=_chat_headers(config), json=body)
+        if resp.status_code != 200:
+            log.warning("chat_provider_status_error", provider=config.provider, status=resp.status_code)
+            return None
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("chat_provider_request_failed", provider=config.provider, error=str(exc))
+        return None
+
+    usage = data.get("usage") or {}
+    log.info(
+        "chat_provider_adjudicated",
+        provider=config.provider,
+        model=config.model,
+        candidates=len(candidates),
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+    )
+    choices = data.get("choices") or []
+    if not choices:
+        return None
+    message = choices[0].get("message") or {}
+    text = message.get("content")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        parsed = json.loads(_strip_json_fence(text))
+    except (ValueError, json.JSONDecodeError):
+        log.warning("chat_provider_json_parse_failed", provider=config.provider)
+        return None
+    verdicts = parsed.get("verdicts")
+    return verdicts if isinstance(verdicts, list) else None
+
+
+def _call_llm_provider(
+    news: RawNewsItem,
+    candidates: list[Candidate],
+    settings: Settings,
+    timeout: float,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    provider = settings.resolved_news_llm_provider
+    if provider == "anthropic":
+        return _call_anthropic(news, candidates, settings, timeout), settings.ANTHROPIC_MODEL
+    if provider in {"deepseek", "openai_compatible", "azure_openai"}:
+        return _call_openai_compatible(news, candidates, settings, timeout), settings.resolved_news_llm_model
+    return None, None
+
+
 def llm_verdicts(
     news: RawNewsItem,
     candidates: list[Candidate],
     settings: Settings,
     timeout: float | None = None,
 ) -> list[RelevanceVerdict]:
-    """Adjudicate via Claude. Returns [] if the LLM is unavailable/failed."""
-    if not settings.ANTHROPIC_API_KEY or not candidates:
+    """Adjudicate via the configured LLM. Returns [] if unavailable/failed."""
+    if not settings.llm_relevance_enabled or not candidates:
         return []
-    raw = _call_anthropic(
-        news, candidates, settings,
-        timeout=timeout or settings.REQUEST_TIMEOUT_SECONDS,
-    )
+    raw, model = _call_llm_provider(news, candidates, settings, timeout=timeout or settings.REQUEST_TIMEOUT_SECONDS)
     if raw is None:
         return []
     by_id = {c.market_id: c for c in candidates}
@@ -249,7 +390,7 @@ def llm_verdicts(
                 confidence=_clamp01(row.get("confidence"), 0.0) or 0.0,
                 implied_p=_clamp01(row.get("implied_probability")),
                 rationale=str(row.get("rationale") or "")[:500],
-                model=settings.ANTHROPIC_MODEL,
+                model=model or "llm",
             )
         )
     return out

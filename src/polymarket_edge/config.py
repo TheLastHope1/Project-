@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     MAX_MARKET_EXPOSURE_USD: float = 1.0
     MAX_POSITION_FRACTION: float = 0.01
 
+    PAPER_STARTING_CASH_USD: float = 1000.0
+    PAPER_MIN_ORDER_USD: float = 1.0
+    PAPER_MAX_ORDER_USD: float = 25.0
+    PAPER_MAX_POSITION_FRACTION: float = 0.05
+    PAPER_DEFAULT_POSITION_FRACTION: float = 0.01
+
     MIN_NET_EDGE: float = 0.03
     MAX_SPREAD: float = 0.05
     MAX_MODEL_SIGMA: float = 0.08
@@ -96,8 +102,18 @@ class Settings(BaseSettings):
     # Keys for optional sources / LLM. Blank disables that capability.
     NEWSAPI_KEY: str = ""
     X_BEARER_TOKEN: str = ""
+    NEWS_LLM_PROVIDER: Literal["auto", "anthropic", "deepseek", "openai_compatible", "azure_openai"] = "auto"
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-v4-pro"
+    OPENAI_COMPATIBLE_API_KEY: str = ""
+    OPENAI_COMPATIBLE_BASE_URL: str = ""
+    OPENAI_COMPATIBLE_MODEL: str = ""
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_BASE_URL: str = ""
+    AZURE_OPENAI_MODEL: str = ""
 
     @field_validator("DATABASE_URL")
     @classmethod
@@ -136,7 +152,53 @@ class Settings(BaseSettings):
 
     @property
     def llm_relevance_enabled(self) -> bool:
-        return self.NEWS_RELEVANCE_MODE in ("hybrid", "llm") and bool(self.ANTHROPIC_API_KEY)
+        return self.NEWS_RELEVANCE_MODE in ("hybrid", "llm") and self.resolved_news_llm_provider is not None
+
+    @property
+    def resolved_news_llm_provider(self) -> str | None:
+        provider = self.NEWS_LLM_PROVIDER
+        if provider == "auto":
+            if self.DEEPSEEK_API_KEY:
+                return "deepseek"
+            if self.AZURE_OPENAI_API_KEY and self.AZURE_OPENAI_BASE_URL and self.AZURE_OPENAI_MODEL:
+                return "azure_openai"
+            if self.OPENAI_COMPATIBLE_API_KEY and self.OPENAI_COMPATIBLE_BASE_URL and self.OPENAI_COMPATIBLE_MODEL:
+                return "openai_compatible"
+            if self.ANTHROPIC_API_KEY:
+                return "anthropic"
+            return None
+        if provider == "anthropic" and self.ANTHROPIC_API_KEY:
+            return provider
+        if provider == "deepseek" and self.DEEPSEEK_API_KEY:
+            return provider
+        if (
+            provider == "openai_compatible"
+            and self.OPENAI_COMPATIBLE_API_KEY
+            and self.OPENAI_COMPATIBLE_BASE_URL
+            and self.OPENAI_COMPATIBLE_MODEL
+        ):
+            return provider
+        if (
+            provider == "azure_openai"
+            and self.AZURE_OPENAI_API_KEY
+            and self.AZURE_OPENAI_BASE_URL
+            and self.AZURE_OPENAI_MODEL
+        ):
+            return provider
+        return None
+
+    @property
+    def resolved_news_llm_model(self) -> str | None:
+        provider = self.resolved_news_llm_provider
+        if provider == "anthropic":
+            return self.ANTHROPIC_MODEL
+        if provider == "deepseek":
+            return self.DEEPSEEK_MODEL
+        if provider == "openai_compatible":
+            return self.OPENAI_COMPATIBLE_MODEL
+        if provider == "azure_openai":
+            return self.AZURE_OPENAI_MODEL
+        return None
 
 
 @lru_cache(maxsize=1)

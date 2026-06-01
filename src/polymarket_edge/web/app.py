@@ -20,10 +20,15 @@ from polymarket_edge.db.models import (
     NewsItem,
     OrderbookSnapshot,
     PaperOrder,
+    PaperPosition,
     Token,
 )
 from polymarket_edge.db.session import get_session, init_db
-from polymarket_edge.execution.paper_trader import paper_trade_from_latest_edges
+from polymarket_edge.execution.paper_trader import (
+    paper_trade_from_latest_edges,
+    paper_wallet_status,
+    reset_paper_wallet,
+)
 from polymarket_edge.ingestion.market_discovery import discover_markets
 from polymarket_edge.ingestion.orderbook_poller import poll_orderbooks_once
 from polymarket_edge.news.edge import scan_news_edges
@@ -70,6 +75,8 @@ def _status(session: Session) -> dict[str, Any]:
         orderbook_snapshots = session.scalar(select(func.count()).select_from(OrderbookSnapshot)) or 0
         edge_snapshots = session.scalar(select(func.count()).select_from(EdgeSnapshot)) or 0
         paper_orders = session.scalar(select(func.count()).select_from(PaperOrder)) or 0
+        paper_positions = session.scalar(select(func.count()).select_from(PaperPosition).where(PaperPosition.shares > 0)) or 0
+        wallet = paper_wallet_status(session).to_dict()
         database_initialized = True
         database_error = None
     except SQLAlchemyError as exc:
@@ -80,6 +87,8 @@ def _status(session: Session) -> dict[str, Any]:
         orderbook_snapshots = 0
         edge_snapshots = 0
         paper_orders = 0
+        paper_positions = 0
+        wallet = None
         database_initialized = False
         database_error = exc.__class__.__name__
     return {
@@ -90,6 +99,8 @@ def _status(session: Session) -> dict[str, Any]:
         "orderbook_snapshots": orderbook_snapshots,
         "edge_snapshots": edge_snapshots,
         "paper_orders": paper_orders,
+        "paper_positions": paper_positions,
+        "paper_wallet": wallet,
         "latest_snapshot": latest_snapshot.isoformat() if latest_snapshot else None,
         "trading_mode": get_settings().TRADING_MODE,
         "live_trading_enabled": get_settings().LIVE_TRADING_ENABLED,
@@ -137,6 +148,7 @@ def _paper_orders(session: Session, limit: int = 50) -> list[dict[str, Any]]:
             "status": row.status,
             "simulated_fill_price": row.simulated_fill_price,
             "simulated_pnl": row.simulated_pnl,
+            "raw_json": row.raw_json,
         }
         for row in rows
     ]
@@ -147,6 +159,28 @@ def _scan_edges_latest(session: Session) -> dict[str, int]:
     from polymarket_edge.cli import _scan_edges_latest as scan_edges_latest
 
     return scan_edges_latest(session, include_all=False)
+
+
+async def _paper_cycle(session: Session, max_tokens: int = 250, include_news: bool = False) -> dict[str, Any]:
+    capped = max(1, min(max_tokens, 1000))
+    poll = await poll_orderbooks_once(session, max_tokens=capped)
+    edges = _scan_edges_latest(session)
+    news: dict[str, Any] | None = None
+    if include_news:
+        news = {
+            "ingest": (await ingest_news(session)).__dict__,
+            "edges": scan_news_edges(session).__dict__,
+        }
+    paper = paper_trade_from_latest_edges(session)
+    wallet = paper_wallet_status(session)
+    return {
+        "requested_max_tokens": capped,
+        "poll_orderbooks": poll.__dict__,
+        "scan_edges": edges,
+        "news": news,
+        "paper_trade": paper.__dict__,
+        "paper_wallet": wallet.to_dict(),
+    }
 
 
 def _recent_news(session: Session, limit: int = 50) -> list[dict[str, Any]]:
@@ -242,6 +276,8 @@ def create_app() -> FastAPI:
               <div class="metric"><div class="label">Active tokens</div><div class="value">{status["active_tokens"]}</div></div>
               <div class="metric"><div class="label">Snapshots</div><div class="value">{status["orderbook_snapshots"]}</div></div>
               <div class="metric"><div class="label">Paper orders</div><div class="value">{status["paper_orders"]}</div></div>
+              <div class="metric"><div class="label">Paper cash</div><div class="value">${(status["paper_wallet"] or {}).get("cash_balance", 0):.2f}</div></div>
+              <div class="metric"><div class="label">Paper equity</div><div class="value">${(status["paper_wallet"] or {}).get("equity", 0):.2f}</div></div>
             </div>
             <p>Mode: <code>{html.escape(str(status["trading_mode"]))}</code>.
             Live enabled: <code>{status["live_trading_enabled"]}</code>.
@@ -289,6 +325,10 @@ def create_app() -> FastAPI:
     def api_paper_orders(session: SessionDep, limit: int = 50) -> dict[str, Any]:
         return {"orders": _paper_orders(session, limit=limit)}
 
+    @app.get("/api/paper-wallet")
+    def api_paper_wallet(session: SessionDep) -> dict[str, Any]:
+        return paper_wallet_status(session).to_dict()
+
     @app.get("/api/news")
     def api_news(session: SessionDep, limit: int = 50) -> dict[str, Any]:
         return {"news": _recent_news(session, limit=limit)}
@@ -335,6 +375,19 @@ def create_app() -> FastAPI:
     @app.post("/api/admin/paper-trade")
     def api_paper_trade(session: SessionDep, _: AdminAuth) -> dict[str, Any]:
         return paper_trade_from_latest_edges(session).__dict__
+
+    @app.post("/api/admin/paper-reset")
+    def api_paper_reset(session: SessionDep, _: AdminAuth, starting_cash: float | None = None) -> dict[str, Any]:
+        return reset_paper_wallet(session, starting_cash=starting_cash).to_dict()
+
+    @app.post("/api/admin/paper-cycle")
+    def api_paper_cycle(
+        session: SessionDep,
+        _: AdminAuth,
+        max_tokens: int = 250,
+        include_news: bool = False,
+    ) -> dict[str, Any]:
+        return asyncio.run(_paper_cycle(session, max_tokens=max_tokens, include_news=include_news))
 
     @app.post("/api/admin/backtest")
     def api_backtest(session: SessionDep, _: AdminAuth, holding_period: int = 3600) -> dict[str, Any]:

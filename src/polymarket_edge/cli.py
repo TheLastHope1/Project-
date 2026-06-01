@@ -20,10 +20,14 @@ from polymarket_edge.backtest.backtester import run_backtest
 from polymarket_edge.config import get_settings, reload_settings
 from polymarket_edge.db.models import EdgeSnapshot, OrderbookSnapshot, Token
 from polymarket_edge.db.session import get_session, init_db
-from polymarket_edge.execution.paper_trader import paper_trade_from_latest_edges
+from polymarket_edge.execution.paper_trader import (
+    paper_trade_from_latest_edges,
+    paper_wallet_status,
+    reset_paper_wallet,
+)
 from polymarket_edge.ingestion.market_discovery import discover_markets
 from polymarket_edge.ingestion.orderbook_poller import poll_orderbooks_loop, poll_orderbooks_once
-from polymarket_edge.ingestion.orderbook_ws import stream_orderbooks
+from polymarket_edge.ingestion.orderbook_ws import stream_orderbooks_from_db
 from polymarket_edge.ingestion.trades_ingestor import ingest_trades
 from polymarket_edge.ingestion.user_ws import stream_user
 from polymarket_edge.models.edge_engine import score_market
@@ -99,10 +103,52 @@ def _scan_edges_latest(session, include_all: bool = False) -> dict[str, int]:
     return {"snapshots_scored": len(snapshots), "edge_rows_saved": saved, "actionable": actionable}
 
 
-async def _poll_loop(interval: int) -> None:
+async def _poll_loop(interval: int, max_tokens: int | None = None) -> None:
     from polymarket_edge.db.session import make_session_factory
 
-    await poll_orderbooks_loop(make_session_factory(), interval=interval)
+    await poll_orderbooks_loop(make_session_factory(), interval=interval, max_tokens=max_tokens)
+
+
+async def _paper_cycle(session, max_tokens: int | None = None, include_news: bool = False) -> dict[str, object]:
+    poll = await poll_orderbooks_once(session, max_tokens=max_tokens)
+    edges = _scan_edges_latest(session, include_all=False)
+    news: dict[str, object] | None = None
+    if include_news:
+        ingest_summary = await ingest_news(session)
+        news_edges = scan_news_edges(session)
+        news = {"ingest": asdict(ingest_summary), "edges": asdict(news_edges)}
+    paper = paper_trade_from_latest_edges(session)
+    wallet = paper_wallet_status(session)
+    return {
+        "poll_orderbooks": asdict(poll),
+        "scan_edges": edges,
+        "news": news,
+        "paper_trade": asdict(paper),
+        "paper_wallet": wallet.to_dict(),
+    }
+
+
+async def _paper_loop(interval: int, max_tokens: int | None = None, include_news: bool = False) -> None:
+    from polymarket_edge.db.session import make_session_factory
+    from polymarket_edge.logging import get_logger
+
+    factory = make_session_factory()
+    log = get_logger(__name__)
+    while True:
+        with factory() as session:
+            result = await _paper_cycle(session, max_tokens=max_tokens, include_news=include_news)
+            session.commit()
+            log.info(
+                "paper_cycle_completed",
+                poll=result["poll_orderbooks"],
+                paper_trade=result["paper_trade"],
+                wallet={
+                    "cash_balance": result["paper_wallet"]["cash_balance"],
+                    "equity": result["paper_wallet"]["equity"],
+                    "positions_count": result["paper_wallet"]["positions_count"],
+                },
+            )
+        await asyncio.sleep(interval)
 
 
 def _run_dashboard() -> int:
@@ -138,9 +184,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_poll.add_argument("--once", action="store_true")
     p_poll.add_argument("--loop", action="store_true")
     p_poll.add_argument("--interval", type=int, default=30)
+    p_poll.add_argument("--max-tokens", type=int, default=None)
 
     p_stream = sub.add_parser("stream-orderbooks")
     p_stream.add_argument("--max-tokens", type=int, default=200)
+    p_stream.add_argument("--max-messages", type=int, default=50)
+    p_stream.add_argument("--persist", action="store_true")
 
     p_trades = sub.add_parser("ingest-trades")
     p_trades.add_argument("--limit", type=int, default=500)
@@ -161,6 +210,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_paper = sub.add_parser("paper-trade")
     p_paper.add_argument("--from-latest-edges", action="store_true")
+
+    sub.add_parser("paper-wallet")
+    p_paper_reset = sub.add_parser("paper-reset")
+    p_paper_reset.add_argument("--starting-cash", type=float, default=None)
+    p_paper_reset.add_argument("--confirm", default="")
+
+    p_paper_cycle = sub.add_parser("paper-cycle")
+    p_paper_cycle.add_argument("--max-tokens", type=int, default=None)
+    p_paper_cycle.add_argument("--include-news", action="store_true")
+
+    p_paper_loop = sub.add_parser("paper-loop")
+    p_paper_loop.add_argument("--interval", type=int, default=30)
+    p_paper_loop.add_argument("--max-tokens", type=int, default=None)
+    p_paper_loop.add_argument("--include-news", action="store_true")
 
     p_backtest = sub.add_parser("backtest")
     p_backtest.add_argument("--holding-period", type=int, default=3600)
@@ -201,15 +264,23 @@ def main(argv: list[str] | None = None) -> int:
         return _run_dashboard()
 
     if args.command == "poll-orderbooks" and args.loop:
-        asyncio.run(_poll_loop(args.interval))
+        asyncio.run(_poll_loop(args.interval, max_tokens=args.max_tokens))
         return 0
 
     if args.command == "stream-orderbooks":
-        _print_json(asdict(asyncio.run(stream_orderbooks(max_tokens=args.max_tokens))))
+        _print_json(asdict(asyncio.run(stream_orderbooks_from_db(
+            max_tokens=args.max_tokens,
+            max_messages=args.max_messages,
+            persist=args.persist,
+        ))))
         return 0
 
     if args.command == "stream-user":
         print(asyncio.run(stream_user()))
+        return 0
+
+    if args.command == "paper-loop":
+        asyncio.run(_paper_loop(args.interval, max_tokens=args.max_tokens, include_news=args.include_news))
         return 0
 
     if args.command == "setup-secrets":
@@ -269,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.once:
                 print("pass --once or --loop")
                 return 2
-            summary = asyncio.run(poll_orderbooks_once(session))
+            summary = asyncio.run(poll_orderbooks_once(session, max_tokens=args.max_tokens))
             _print_json(asdict(summary))
             return 0
 
@@ -317,6 +388,22 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             summary = paper_trade_from_latest_edges(session)
             _print_json(asdict(summary))
+            return 0
+
+        if args.command == "paper-wallet":
+            _print_json(paper_wallet_status(session).to_dict())
+            return 0
+
+        if args.command == "paper-reset":
+            if args.confirm != "RESET PAPER WALLET":
+                print('paper reset refused; pass --confirm "RESET PAPER WALLET"')
+                return 2
+            _print_json(reset_paper_wallet(session, starting_cash=args.starting_cash).to_dict())
+            return 0
+
+        if args.command == "paper-cycle":
+            result = asyncio.run(_paper_cycle(session, max_tokens=args.max_tokens, include_news=args.include_news))
+            _print_json(result)
             return 0
 
         if args.command == "backtest":

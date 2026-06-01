@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import sessionmaker
 
 from polymarket_edge.arbitrage.binary_scanner import scan_binary_arbitrage
-from polymarket_edge.db.models import Base, EdgeSnapshot, Market, OrderbookSnapshot, Token
+from polymarket_edge.db.models import Base, EdgeSnapshot, Market, OrderbookSnapshot, PaperPosition, Token
 from polymarket_edge.db.session import make_engine
-from polymarket_edge.execution.paper_trader import paper_trade_from_latest_edges
+from polymarket_edge.execution.paper_trader import paper_trade_from_latest_edges, paper_wallet_status
 
 
 def _session(tmp_path):
@@ -99,6 +99,42 @@ def test_paper_order_creation_and_fill(tmp_path):
     summary = paper_trade_from_latest_edges(session)
     assert summary.orders_created == 1
     assert summary.filled == 1
+    wallet = paper_wallet_status(session)
+    position = session.query(PaperPosition).filter_by(token_id="yes").one()
+    assert wallet.cash_balance < 1000
+    assert wallet.positions_count == 1
+    assert position.shares > 0
+    assert position.cost_basis > 0
+
+
+def test_paper_wallet_does_not_short_sell_without_position(tmp_path):
+    session = _session(tmp_path)
+    _binary_fixture(session)
+    session.add(
+        EdgeSnapshot(
+            market_id="m1",
+            token_id="yes",
+            timestamp=datetime.now(UTC),
+            side="SELL",
+            p_hat=0.2,
+            sigma_p=0.01,
+            bid=0.48,
+            ask=0.49,
+            raw_edge=0.28,
+            total_cost=0.01,
+            net_edge=0.27,
+            kelly_size=0.01,
+            action="SELL",
+            raw_json={},
+        )
+    )
+    session.commit()
+
+    summary = paper_trade_from_latest_edges(session)
+
+    assert summary.orders_created == 0
+    assert summary.skipped_no_position == 1
+    assert session.query(PaperPosition).count() == 0
 
 
 def test_backtest_fixture_has_later_snapshot(tmp_path):
@@ -119,4 +155,3 @@ def test_backtest_fixture_has_later_snapshot(tmp_path):
     result = run_backtest(session, 3600)
     assert result.trades == 1
     assert result.total_pnl > 0
-

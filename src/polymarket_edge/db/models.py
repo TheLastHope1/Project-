@@ -158,6 +158,23 @@ class PaperOrder(Base):
     raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
 
 
+class PaperPosition(Base):
+    __tablename__ = "paper_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    market_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    token_id: Mapped[str] = mapped_column(String(256), unique=True, nullable=False, index=True)
+    shares: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    avg_price: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    cost_basis: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    realised_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
+
+
 class LiveOrder(Base):
     __tablename__ = "live_orders"
 
@@ -274,4 +291,3 @@ class NewsSignal(Base):
     model: Mapped[str] = mapped_column(String(64), default="deterministic", nullable=False)
     rationale: Mapped[str | None] = mapped_column(Text)
     raw_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict, nullable=False)
-

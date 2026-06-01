@@ -92,6 +92,7 @@ def test_web_public_status_and_edges(tmp_path, monkeypatch):
 
     assert health.json() == {"ok": True}
     assert status.json()["active_markets"] == 1
+    assert status.json()["paper_wallet"]["starting_cash"] == 1000
     assert edges.json()["edges"][0]["token_id"] == "yes"
 
 
@@ -170,6 +171,21 @@ def test_web_admin_requires_configured_token(tmp_path, monkeypatch):
     assert bad.status_code == 401
     assert good.status_code == 200
     assert good.json() == {"ok": True}
+
+
+def test_web_paper_wallet_and_reset_endpoint(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch, api_token="secret-token")
+
+    wallet = client.get("/api/paper-wallet")
+    reset = client.post(
+        "/api/admin/paper-reset?starting_cash=500",
+        headers={"x-api-token": "secret-token"},
+    )
+
+    assert wallet.status_code == 200
+    assert wallet.json()["starting_cash"] == 1000
+    assert reset.status_code == 200
+    assert reset.json()["cash_balance"] == 500
 
 
 def test_web_kill_switch_records_event(tmp_path, monkeypatch):

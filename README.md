@@ -24,8 +24,25 @@ python -m polymarket_edge.cli poll-orderbooks --once
 python -m polymarket_edge.cli scan-binary-arb
 python -m polymarket_edge.cli scan-edges --latest
 python -m polymarket_edge.cli paper-trade --from-latest-edges
+python -m polymarket_edge.cli paper-wallet
 python -m polymarket_edge.cli backtest --holding-period 3600
 python -m polymarket_edge.cli dashboard
+```
+
+For a live-data paper cycle with the default `$1000` paper wallet:
+
+```bash
+python -m polymarket_edge.cli paper-reset --starting-cash 1000 --confirm "RESET PAPER WALLET"
+python -m polymarket_edge.cli paper-cycle --max-tokens 500
+python -m polymarket_edge.cli paper-loop --interval 30 --max-tokens 500
+```
+
+`paper-loop` uses public Gamma/CLOB data only, rescans executable order books, applies bankroll/position limits, and simulates limit-order fills against displayed depth. It will not place real orders.
+
+For near-real-time CLOB market-channel ingestion:
+
+```bash
+python -m polymarket_edge.cli stream-orderbooks --max-tokens 200 --max-messages 100 --persist
 ```
 
 ## Optional Trading Setup
@@ -70,6 +87,7 @@ Public read-only endpoints:
 - `GET /api/binary-arb`
 - `GET /api/logical-arb` (add `?locked_only=true` for risk-free pairs only)
 - `GET /api/paper-orders`
+- `GET /api/paper-wallet`
 - `GET /api/live-preflight`
 
 Admin endpoints require `POLYMARKET_EDGE_API_TOKEN` as `Authorization: Bearer ...`, `x-api-token`, or `?token=...`. If the token is unset, admin endpoints return `503`.
@@ -88,11 +106,14 @@ TRADING_MODE=paper
 LIVE_TRADING_ENABLED=false
 REAL_MONEY_ACKNOWLEDGED=false
 ALLOW_MARKET_ORDERS=false
+PAPER_STARTING_CASH_USD=1000
 ```
 
 For Vercel, prefer the Supabase transaction pooler URL. The engine detects `pooler.supabase.com` and disables psycopg prepared statements for that connection, which avoids transaction-pooler incompatibilities.
 
 The canonical Supabase schema is tracked in `supabase/migrations/` and mirrored in `src/polymarket_edge/db/schema.sql`.
+
+Optional AI news adjudication is disabled unless you explicitly set an LLM key in `.env.local` or the deployment environment. `NEWS_LLM_PROVIDER=auto` prefers `DEEPSEEK_API_KEY` (`deepseek-v4-pro`), then Azure OpenAI (`AZURE_OPENAI_BASE_URL` + `AZURE_OPENAI_MODEL`), then a generic OpenAI-compatible endpoint, then Anthropic. The deterministic pipeline remains available with no keys.
 
 Generate the admin token with:
 
