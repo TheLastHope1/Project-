@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "python -m pip install .",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "env": {
+    "DATA_MODE": "public",
+    "TRADING_MODE": "paper",
+    "LIVE_TRADING_ENABLED": "false",
+    "REAL_MONEY_ACKNOWLEDGED": "false",
+    "ALLOW_MARKET_ORDERS": "false"
+  }
+}
